@@ -358,6 +358,11 @@ void StandalonePitchDetector::setupAudioWithPermission()
         // Now set audio channels for this component
         setAudioChannels(1, 0); // Mono input, no output
         audioSetupFailed = false;
+
+        // Update GUI status bar with device info
+        if (auto* dev = deviceManager.getCurrentAudioDevice()) {
+            gui.setAudioDeviceInfo(dev->getName(), dev->getCurrentSampleRate(), dev->getCurrentBufferSizeSamples());
+        }
     } else {
         DBG("Audio initialization failed: " << errorMessage);
         audioSetupFailed = true;

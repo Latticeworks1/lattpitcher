@@ -1,0 +1,7 @@
+fastapi>=0.111
+uvicorn[standard]>=0.30
+yt-dlp>=2024.07.09
+ffmpeg-python>=0.2
+google-genai>=0.3; python_version>='3.10'
+python-multipart>=0.0.9
+orjson>=3.10

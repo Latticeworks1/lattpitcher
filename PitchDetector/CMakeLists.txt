@@ -8,6 +8,8 @@ add_subdirectory(../JUCE ../JUCE_build)
 set(COMMON_SOURCES
     Source/PitchDetectionEngine.cpp
     Source/PitchDetectorGUI.cpp
+    Source/AutotuneEngine.cpp
+    Source/NeuralSpectralAutotuneEngine.cpp
 )
 
 # Common JUCE libraries
@@ -16,6 +18,7 @@ set(COMMON_JUCE_LIBS
     juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_utils
+    juce::juce_dsp
     juce::juce_core
     juce::juce_events
     juce::juce_gui_basics
@@ -41,10 +44,13 @@ juce_add_gui_app(PitchDetectorApp
 target_sources(PitchDetectorApp PRIVATE
     Main.cpp
     Source/StandaloneApp.cpp
+    Source/PitchDetectorProcessor.cpp
+    Source/PitchDetectorEditor.cpp
     ${COMMON_SOURCES}
 )
 
 target_link_libraries(PitchDetectorApp PRIVATE
+    juce::juce_audio_processors
     ${COMMON_JUCE_LIBS}
 )
 
@@ -65,8 +71,8 @@ juce_add_plugin(PitchDetectorPlugin
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
-    VST3_COPY_DIR "~/Library/Audio/Plug-Ins/VST3"
-    AU_COPY_DIR "~/Library/Audio/Plug-Ins/Components"
+    VST3_COPY_DIR "/Users/m1a4xnetworkprobe./Library/Audio/Plug-Ins/VST3"
+    AU_COPY_DIR "/Users/m1a4xnetworkprobe./Library/Audio/Plug-Ins/Components"
 )
 
 target_sources(PitchDetectorPlugin PRIVATE
@@ -85,4 +91,18 @@ target_compile_definitions(PitchDetectorPlugin PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
+)
+
+# =============================================================================
+# Test: PV spectral envelope normalization
+# =============================================================================
+add_executable(PVTest
+    tests/pv_test.cpp
+    Source/AutotuneEngine.cpp
+    Source/PitchDetectionEngine.cpp
+)
+
+target_include_directories(PVTest PRIVATE Source)
+target_link_libraries(PVTest PRIVATE
+    ${COMMON_JUCE_LIBS}
 )

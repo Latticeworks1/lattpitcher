@@ -463,3 +463,202 @@ String PitchDetectionEngine::exportTelemetryJson() const
     
     return jsonData;
 }
+
+//==============================================================================
+// Vocal-specific detection methods
+
+float PitchDetectionEngine::detectPitchWithConfidence(const float* buffer, int size, double sampleRate, float& confidence)
+{
+    confidence = 0.0f;
+    
+    if (!vocalOptimization) {
+        float pitch = detectPitch(buffer, size, sampleRate);
+        confidence = (pitch > 0.0f) ? 0.8f : 0.0f; // Basic confidence
+        return pitch;
+    }
+    
+    float vocalPitch = detectVocalPitch(buffer, size, sampleRate);
+    
+    if (vocalPitch > 0.0f) {
+        // Calculate confidence based on harmonic content and stability
+        float harmonicWeight = weighByHarmonics(vocalPitch, buffer, size, sampleRate);
+        float formantWeight = analyzeFormantContent(buffer, size, sampleRate);
+        
+        confidence = 0.3f + (harmonicWeight * 0.4f) + (formantWeight * 0.3f);
+        confidence = jlimit(0.0f, 1.0f, confidence);
+    }
+    
+    return vocalPitch;
+}
+
+std::vector<float> PitchDetectionEngine::getHarmonicContent(const float* buffer, int size, double sampleRate, float fundamental)
+{
+    std::vector<float> harmonics;
+    if (fundamental <= 0.0f || size <= 0) return harmonics;
+    
+    // Analyze first 8 harmonics
+    harmonics.reserve(8);
+    
+    // Simple FFT-based harmonic analysis
+    std::vector<float> spectrum(size / 2);
+    
+    // Calculate power spectrum
+    for (int i = 1; i < size / 2; ++i) {
+        float real = 0.0f, imag = 0.0f;
+        for (int j = 0; j < size; ++j) {
+            float angle = 2.0f * MathConstants<float>::pi * i * j / size;
+            real += buffer[j] * std::cos(angle);
+            imag += buffer[j] * std::sin(angle);
+        }
+        spectrum[i] = real * real + imag * imag;
+    }
+    
+    // Find harmonic peaks
+    float binFreq = static_cast<float>(sampleRate) / size;
+    for (int harmonic = 1; harmonic <= 8; ++harmonic) {
+        float targetFreq = fundamental * harmonic;
+        int targetBin = static_cast<int>(targetFreq / binFreq);
+        
+        if (targetBin < spectrum.size()) {
+            harmonics.push_back(spectrum[targetBin]);
+        } else {
+            harmonics.push_back(0.0f);
+        }
+    }
+    
+    return harmonics;
+}
+
+float PitchDetectionEngine::detectVocalPitch(const float* buffer, int size, double sampleRate)
+{
+    // Enhanced YIN algorithm optimized for vocals
+    float pitch = detectPitchYin(buffer, size, sampleRate);
+    
+    if (pitch > 0.0f && vocalOptimization) {
+        // Apply vocal-specific refinements
+        float harmonicWeight = weighByHarmonics(pitch, buffer, size, sampleRate);
+        float formantInfluence = analyzeFormantContent(buffer, size, sampleRate);
+        
+        // Adjust pitch based on harmonic strength
+        if (harmonicWeight > 0.5f) {
+            // Pitch is well-supported by harmonics, trust it more
+            pitch = applyStabilityFilter(pitch);
+        } else if (harmonicWeight < 0.3f) {
+            // Weak harmonic support, might be noise
+            return 0.0f;
+        }
+        
+        // Use formant information to validate vocal content
+        if (formantInfluence < 0.2f) {
+            // Doesn't look like vocal content
+            pitch *= 0.5f; // Reduce confidence
+        }
+    }
+    
+    return pitch;
+}
+
+float PitchDetectionEngine::analyzeFormantContent(const float* buffer, int size, double sampleRate)
+{
+    // Analyze formant regions typical for human vocals
+    // F1: 300-900Hz, F2: 900-2800Hz, F3: 1900-3800Hz
+    
+    std::vector<float> spectrum(size / 2);
+    
+    // Simple power spectrum calculation
+    for (int i = 1; i < size / 2; ++i) {
+        float real = 0.0f, imag = 0.0f;
+        for (int j = 0; j < size; ++j) {
+            float angle = 2.0f * MathConstants<float>::pi * i * j / size;
+            real += buffer[j] * std::cos(angle);
+            imag += buffer[j] * std::sin(angle);
+        }
+        spectrum[i] = std::sqrt(real * real + imag * imag);
+    }
+    
+    float binFreq = static_cast<float>(sampleRate) / size;
+    
+    // Analyze formant regions
+    float f1Energy = 0.0f, f2Energy = 0.0f, f3Energy = 0.0f;
+    int f1Count = 0, f2Count = 0, f3Count = 0;
+    
+    for (int i = 1; i < spectrum.size(); ++i) {
+        float freq = i * binFreq;
+        
+        if (freq >= 300.0f && freq <= 900.0f) {
+            f1Energy += spectrum[i];
+            f1Count++;
+        } else if (freq >= 900.0f && freq <= 2800.0f) {
+            f2Energy += spectrum[i];
+            f2Count++;
+        } else if (freq >= 1900.0f && freq <= 3800.0f) {
+            f3Energy += spectrum[i];
+            f3Count++;
+        }
+    }
+    
+    // Normalize by bin count
+    if (f1Count > 0) f1Energy /= f1Count;
+    if (f2Count > 0) f2Energy /= f2Count;
+    if (f3Count > 0) f3Energy /= f3Count;
+    
+    // Calculate formant presence indicator
+    float totalFormantEnergy = f1Energy + f2Energy + f3Energy;
+    float maxEnergy = *std::max_element(spectrum.begin(), spectrum.end());
+    
+    return jlimit(0.0f, 1.0f, totalFormantEnergy / (maxEnergy + 1e-10f));
+}
+
+float PitchDetectionEngine::weighByHarmonics(float frequency, const float* buffer, int size, double sampleRate)
+{
+    if (frequency <= 0.0f) return 0.0f;
+    
+    std::vector<float> harmonics = getHarmonicContent(buffer, size, sampleRate, frequency);
+    if (harmonics.empty()) return 0.0f;
+    
+    // Calculate harmonic-to-noise ratio
+    float harmonicSum = 0.0f;
+    float fundamentalPower = harmonics[0];
+    
+    for (size_t i = 0; i < harmonics.size(); ++i) {
+        // Weight harmonics by their expected strength (decreasing with order)
+        float weight = 1.0f / (i + 1.0f);
+        harmonicSum += harmonics[i] * weight;
+    }
+    
+    // Return ratio indicating how well the frequency is supported by harmonics
+    return jlimit(0.0f, 1.0f, harmonicSum / (fundamentalPower + harmonicSum + 1e-10f));
+}
+
+std::vector<float> PitchDetectionEngine::findFormantPeaks(const float* buffer, int size, double sampleRate)
+{
+    std::vector<float> formantFreqs;
+    
+    // Calculate power spectrum
+    std::vector<float> spectrum(size / 2);
+    for (int i = 1; i < size / 2; ++i) {
+        float real = 0.0f, imag = 0.0f;
+        for (int j = 0; j < size; ++j) {
+            float angle = 2.0f * MathConstants<float>::pi * i * j / size;
+            real += buffer[j] * std::cos(angle);
+            imag += buffer[j] * std::sin(angle);
+        }
+        spectrum[i] = real * real + imag * imag;
+    }
+    
+    float binFreq = static_cast<float>(sampleRate) / size;
+    
+    // Find peaks in formant regions
+    for (int i = 2; i < spectrum.size() - 2; ++i) {
+        float freq = i * binFreq;
+        if (freq > 200.0f && freq < 4000.0f) { // Vocal formant range
+            if (spectrum[i] > spectrum[i-1] && spectrum[i] > spectrum[i+1] &&
+                spectrum[i] > spectrum[i-2] && spectrum[i] > spectrum[i+2]) {
+                // Local peak found
+                formantFreqs.push_back(freq);
+            }
+        }
+    }
+    
+    return formantFreqs;
+}

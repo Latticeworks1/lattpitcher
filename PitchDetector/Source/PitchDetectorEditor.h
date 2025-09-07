@@ -7,23 +7,21 @@
 using namespace juce;
 
 //==============================================================================
-class PitchDetectorEditor : public AudioProcessorEditor,
-                            private Timer
+class PitchDetectorEditor : public AudioProcessorEditor
 {
 public:
     PitchDetectorEditor(PitchDetectorProcessor& p);
     ~PitchDetectorEditor() override;
-    
-    void paint(Graphics& g) override;
+
+    void paint (Graphics&) override;
     void resized() override;
     
-private:
-    void timerCallback() override;
-    void exportTelemetryData();
-    void resetTelemetryData();
+    
     
     PitchDetectorProcessor& audioProcessor;
     PitchDetectorGUI gui;
-    
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchDetectorEditor)
+
+    TextButton recordButton;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PitchDetectorEditor)
 };

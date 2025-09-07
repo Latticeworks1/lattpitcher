@@ -96,6 +96,16 @@ public:
     float getMaxFrequency() const { return maxFrequency; }
     float getCorrelationThreshold() const { return correlationThresholdFactor; }
     
+    // Vocal optimization controls
+    void setVocalOptimization(bool enabled) { vocalOptimization = enabled; }
+    void setFormantAwareness(float awareness) { formantAwareness = jlimit(0.0f, 1.0f, awareness); }
+    void setHarmonicSupport(float support) { harmonicSupport = jlimit(0.0f, 1.0f, support); }
+    bool isVocalOptimized() const { return vocalOptimization; }
+    
+    // Advanced vocal detection
+    float detectPitchWithConfidence(const float* buffer, int size, double sampleRate, float& confidence);
+    std::vector<float> getHarmonicContent(const float* buffer, int size, double sampleRate, float fundamental);
+    
     // Telemetry
     void initializeTelemetry();
     TelemetryData& getTelemetry() { return telemetry; }
@@ -105,9 +115,14 @@ public:
 private:
     // Detection parameters
     float noiseThreshold = 0.005f;
-    float minFrequency = 60.0f;
-    float maxFrequency = 1000.0f;
+    float minFrequency = 80.0f;        // Optimized for vocal fundamental (was 60Hz)
+    float maxFrequency = 1200.0f;      // Extended vocal range (was 1000Hz)  
     float correlationThresholdFactor = 0.3f;
+    
+    // Vocal-specific parameters
+    bool vocalOptimization = true;     // Enable vocal-specific processing
+    float formantAwareness = 0.7f;     // Weight formant regions in detection
+    float harmonicSupport = 0.5f;      // Use harmonic content to support fundamental detection
     
     // Algorithm selection
     enum DetectionMethod { Autocorrelation, YIN, HPS, Cepstrum, Hybrid };
@@ -130,6 +145,12 @@ private:
     float applyStabilityFilter(float newFrequency);
     float interpolatePeak(const std::vector<float>& data, int peakIndex);
     void preprocess(const float* input, float* output, int size); // Apply windowing and normalization
+    
+    // Vocal-specific internal methods
+    float detectVocalPitch(const float* buffer, int size, double sampleRate);
+    float analyzeFormantContent(const float* buffer, int size, double sampleRate);
+    float weighByHarmonics(float frequency, const float* buffer, int size, double sampleRate);
+    std::vector<float> findFormantPeaks(const float* buffer, int size, double sampleRate);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchDetectionEngine)
 };
