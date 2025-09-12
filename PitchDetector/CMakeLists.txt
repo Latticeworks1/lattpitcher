@@ -4,13 +4,9 @@ project(PitchDetector VERSION 1.0.0)
 # Point to JUCE directory
 add_subdirectory(../JUCE ../JUCE_build)
 
-# Common source files
+# Unified source files - NO MORE FRAGMENTATION
 set(COMMON_SOURCES
-    Source/PitchDetectionEngine.cpp
-    Source/PitchDetectorGUI.cpp
-    Source/AutotuneEngine.cpp
-    Source/SimpleAutotuneGUI.cpp
-    Source/PitchDisplayCard.cpp
+    Source/PitchDetector.cpp
 )
 
 # Common JUCE libraries
@@ -44,9 +40,6 @@ juce_add_gui_app(PitchDetectorApp
 
 target_sources(PitchDetectorApp PRIVATE
     Main.cpp
-    Source/StandaloneApp.cpp
-    Source/PitchDetectorProcessor.cpp
-    Source/PitchDetectorEditor.cpp
     ${COMMON_SOURCES}
 )
 
@@ -91,8 +84,6 @@ juce_add_plugin(PitchDetectorPlugin
 )
 
 target_sources(PitchDetectorPlugin PRIVATE
-    Source/PitchDetectorProcessor.cpp
-    Source/PitchDetectorEditor.cpp
     ${COMMON_SOURCES}
 )
 
@@ -129,8 +120,7 @@ endif()
 # =============================================================================
 add_executable(LPCFormantTest
     test_lpc_formant.cpp
-    Source/AutotuneEngine.cpp
-    Source/PitchDetectionEngine.cpp
+    ${COMMON_SOURCES}
 )
 target_include_directories(LPCFormantTest PRIVATE Source)
 target_link_libraries(LPCFormantTest PRIVATE
