@@ -8,14 +8,18 @@ This is a JUCE-based real-time pitch detection and autotune application with dua
 - **Standalone Application**: Cross-platform GUI app for live pitch analysis
 - **Audio Plugin**: VST3/AU plugin for DAW integration with automation support
 
-### Core Components
+### Unified Architecture (2-File System)
 
+**Source/PitchDetector.h** - Unified header containing:
+- `PitchDetectorConstants`: Namespace eliminating ALL magic numbers with meaningful constants
 - `PitchDetectionEngine`: Multi-algorithm pitch detection (YIN, HPS, Cepstrum, Autocorrelation) with vocal optimization
 - `AutotuneEngine`: Real-time pitch correction with PSOLA, Phase Vocoder, and LPC formant preservation
-- `PitchDetectorGUI`: Professional VST-style interface with real-time controls
+- `PitchDetectorGUI`: Professional VST-style glassmorphism interface (800x550) with rotary controls
 - `PitchDetectorProcessor`: Audio plugin processor with VST automation parameters
 - `PitchDetectorEditor`: Plugin editor wrapper managing GUI integration
-- `StandalonePitchDetector`: Standalone app audio management with microphone permissions
+- `StandalonePitchDetector`: Standalone app audio management with dynamic sample rate detection
+
+**Source/PitchDetector.cpp** - Unified implementation containing all method definitions (2100+ lines)
 
 ### Key Data Structures
 - `NoteInfo`: Musical note representation with cents deviation
@@ -26,9 +30,14 @@ This is a JUCE-based real-time pitch detection and autotune application with dua
 ## Build System
 
 ### CMake Configuration
-Modern JUCE CMake build system with dual targets and comprehensive options:
+Simplified JUCE CMake build system with unified source architecture:
 
 ```cmake
+# Unified source files - NO MORE FRAGMENTATION
+set(COMMON_SOURCES
+    Source/PitchDetector.cpp
+)
+
 # Build both targets
 mkdir -p build && cd build
 cmake ..
@@ -62,10 +71,10 @@ juce::juce_gui_basics        # UI components
 ## Audio Processing Architecture
 
 ### Real-time Processing Flow
-1. **Audio Input**: Microphone/DAW → `processBlock()` → FIFO buffer (4096 samples)
-2. **Pitch Detection**: Multi-algorithm analysis with confidence scoring
+1. **Audio Input**: Microphone/DAW → `processBlock()` → FIFO buffer (`PROCESSING_FIFO_SIZE = 8192`)
+2. **Pitch Detection**: Multi-algorithm analysis with confidence scoring using dynamic sample rates
 3. **Autotune Processing**: Scale-aware pitch correction with formant preservation
-4. **GUI Updates**: Thread-safe result transfer via `CriticalSection`
+4. **GUI Updates**: Thread-safe result transfer via `CriticalSection` at `GUI_REFRESH_RATE = 60`
 5. **Telemetry**: Performance monitoring with exportable JSON data
 
 ### Threading Model
@@ -149,13 +158,26 @@ Built-in telemetry system tracks:
 
 ## Code Patterns
 
-### Thread Safety
-All audio processing uses proper JUCE patterns:
+### Magic Number Elimination
+All hardcoded values moved to `PitchDetectorConstants` namespace:
 ```cpp
-// Audio thread processing
+namespace PitchDetectorConstants {
+    static constexpr double DEFAULT_SAMPLE_RATE = 44100.0;
+    static constexpr int DEFAULT_BUFFER_SIZE = 512;
+    static constexpr int PROCESSING_FIFO_SIZE = 8192;
+    static constexpr int EDITOR_WIDTH = 800;
+    static constexpr int EDITOR_HEIGHT = 550;
+    // ... comprehensive constants for all formerly magic numbers
+}
+```
+
+### Thread Safety
+All audio processing uses proper JUCE patterns with dynamic sample rates:
+```cpp
+// Audio thread processing with dynamic rates
 void processBlock(AudioBuffer<float>& buffer, MidiBuffer&) override
 {
-    // Lock-free FIFO for GUI communication
+    auto currentRate = getSampleRate();  // NO MORE HARDCODED 44100!
     pushSamplesToFifo(buffer.getReadPointer(0), buffer.getNumSamples());
 }
 
