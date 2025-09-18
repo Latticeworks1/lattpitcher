@@ -39,8 +39,8 @@ private:
     
     //==============================================================================
     // Visual constants (FL Studio theme)
-    static constexpr int EDITOR_WIDTH = 500;
-    static constexpr int EDITOR_HEIGHT = 700;
+    static constexpr int EDITOR_WIDTH = 600;
+    static constexpr int EDITOR_HEIGHT = 750;
     static constexpr int MARGIN = 10;
     static constexpr int COMPONENT_HEIGHT = 25;
     static constexpr int SECTION_SPACING = 15;

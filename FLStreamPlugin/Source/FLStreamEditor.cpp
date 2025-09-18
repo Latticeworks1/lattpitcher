@@ -349,42 +349,43 @@ void FLStreamEditor::resized()
     y += 30;
     
     // Connection section
-    connectionGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 120);
+    connectionGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 140);
     y += 20;
     
     streamingModeLabel.setBounds(MARGIN + 10, y, 60, COMPONENT_HEIGHT);
-    streamingModeCombo.setBounds(MARGIN + 80, y, 150, COMPONENT_HEIGHT);
+    streamingModeCombo.setBounds(MARGIN + 80, y, 160, COMPONENT_HEIGHT);
     
-    serverStartButton.setBounds(MARGIN + 240, y, 100, COMPONENT_HEIGHT);
-    connectButton.setBounds(MARGIN + 350, y, 120, COMPONENT_HEIGHT);
-    y += 35;
+    serverStartButton.setBounds(MARGIN + 250, y, 100, COMPONENT_HEIGHT);
+    connectButton.setBounds(MARGIN + 360, y, 120, COMPONENT_HEIGHT);
+    y += 30;
     
     portLabel.setBounds(MARGIN + 10, y, 40, COMPONENT_HEIGHT);
-    portSlider.setBounds(MARGIN + 60, y, 100, COMPONENT_HEIGHT);
+    portSlider.setBounds(MARGIN + 60, y, 80, COMPONENT_HEIGHT);
     
-    roomIdLabel.setBounds(MARGIN + 180, y, 70, COMPONENT_HEIGHT);
-    roomIdEditor.setBounds(MARGIN + 260, y, 120, COMPONENT_HEIGHT);
-    y += 35;
+    roomIdLabel.setBounds(MARGIN + 150, y, 70, COMPONENT_HEIGHT);
+    roomIdEditor.setBounds(MARGIN + 230, y, 140, COMPONENT_HEIGHT);
+    y += 30;
     
     // Client connection fields (only visible in client mode)
     serverAddressLabel.setBounds(MARGIN + 10, y, 100, COMPONENT_HEIGHT);
-    serverAddressEditor.setBounds(MARGIN + 120, y, 120, COMPONENT_HEIGHT);
-    serverPortLabel.setBounds(MARGIN + 250, y, 80, COMPONENT_HEIGHT);
-    serverPortSlider.setBounds(MARGIN + 340, y, 100, COMPONENT_HEIGHT);
-    y += 35;
+    serverAddressEditor.setBounds(MARGIN + 120, y, 140, COMPONENT_HEIGHT);
+    serverPortLabel.setBounds(MARGIN + 270, y, 80, COMPONENT_HEIGHT);
+    serverPortSlider.setBounds(MARGIN + 360, y, 80, COMPONENT_HEIGHT);
+    y += 30;
     
     openWebClientButton.setBounds(MARGIN + 10, y, 150, COMPONENT_HEIGHT);
-    y += 50;
+    y += 40;
     
     // Audio controls section
-    audioGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 120);
+    audioGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 110);
     y += 25;
     
-    int knobWidth = 80;
-    int knobSpacing = (getWidth() - 2 * MARGIN - 3 * knobWidth) / 4;
+    int knobWidth = 70;
+    int availableWidth = getWidth() - 2 * MARGIN - 20; // Group padding
+    int knobSpacing = (availableWidth - 3 * knobWidth) / 4;
     
     // Input gain
-    int knobX = MARGIN + knobSpacing;
+    int knobX = MARGIN + 10 + knobSpacing;
     inputGainLabel.setBounds(knobX, y, knobWidth, 15);
     inputGainSlider.setBounds(knobX, y + 15, knobWidth, knobWidth);
     inputGainValueLabel.setBounds(knobX, y + 15 + knobWidth, knobWidth, 15);
@@ -401,59 +402,58 @@ void FLStreamEditor::resized()
     mixAmountSlider.setBounds(knobX, y + 15, knobWidth, knobWidth);
     mixAmountValueLabel.setBounds(knobX, y + 15 + knobWidth, knobWidth, 15);
     
-    y += 120;
+    y += 110;
     
     // Advanced section
-    advancedGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 80);
+    advancedGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 70);
     y += 25;
     
-    masterTrackToggle.setBounds(MARGIN + 10, y, 150, COMPONENT_HEIGHT);
-    y += 35;
+    masterTrackToggle.setBounds(MARGIN + 10, y, 180, COMPONENT_HEIGHT);
     
-    latencyCompLabel.setBounds(MARGIN + 10, y, 140, COMPONENT_HEIGHT);
-    latencyCompSlider.setBounds(MARGIN + 160, y, 200, COMPONENT_HEIGHT);
-    latencyCompValueLabel.setBounds(MARGIN + 370, y, 80, COMPONENT_HEIGHT);
-    y += 50;
+    latencyCompLabel.setBounds(MARGIN + 200, y, 120, COMPONENT_HEIGHT);
+    latencyCompSlider.setBounds(MARGIN + 330, y, 160, COMPONENT_HEIGHT);
+    latencyCompValueLabel.setBounds(MARGIN + 500, y, 80, COMPONENT_HEIGHT);
+    y += 45;
     
     // Status section  
-    statusGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 100);
+    statusGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 90);
     y += 25;
     
     int statusCol1 = MARGIN + 10;
-    int statusCol2 = MARGIN + 120;
-    int statusCol3 = MARGIN + 260;
-    int statusCol4 = MARGIN + 370;
+    int statusCol2 = MARGIN + 140;
+    int statusCol3 = MARGIN + 290;
+    int statusCol4 = MARGIN + 420;
     
-    connectedUsersLabel.setBounds(statusCol1, y, 100, COMPONENT_HEIGHT);
+    connectedUsersLabel.setBounds(statusCol1, y, 120, COMPONENT_HEIGHT);
     connectedUsersValue.setBounds(statusCol2, y, 80, COMPONENT_HEIGHT);
     
-    bandwidthLabel.setBounds(statusCol3, y, 80, COMPONENT_HEIGHT);
-    bandwidthValue.setBounds(statusCol4, y, 100, COMPONENT_HEIGHT);
+    bandwidthLabel.setBounds(statusCol3, y, 100, COMPONENT_HEIGHT);
+    bandwidthValue.setBounds(statusCol4, y, 120, COMPONENT_HEIGHT);
     y += 25;
     
-    latencyLabel.setBounds(statusCol1, y, 100, COMPONENT_HEIGHT);
+    latencyLabel.setBounds(statusCol1, y, 120, COMPONENT_HEIGHT);
     latencyValue.setBounds(statusCol2, y, 80, COMPONENT_HEIGHT);
     
-    cpuUsageLabel.setBounds(statusCol3, y, 80, COMPONENT_HEIGHT);
-    cpuUsageValue.setBounds(statusCol4, y, 100, COMPONENT_HEIGHT);
+    cpuUsageLabel.setBounds(statusCol3, y, 100, COMPONENT_HEIGHT);
+    cpuUsageValue.setBounds(statusCol4, y, 120, COMPONENT_HEIGHT);
     y += 25;
     
     // Audio meters
-    inputMeterLabel.setBounds(statusCol1, y, 100, 15);
-    inputMeterComponent.setBounds(statusCol1, y + 15, 200, 20);
+    inputMeterLabel.setBounds(statusCol1, y, 120, 15);
+    inputMeterComponent.setBounds(statusCol1, y + 15, 220, 20);
     
-    outputMeterLabel.setBounds(statusCol3, y, 100, 15);
-    outputMeterComponent.setBounds(statusCol3, y + 15, 200, 20);
-    y += 55;
+    outputMeterLabel.setBounds(statusCol3, y, 120, 15);
+    outputMeterComponent.setBounds(statusCol3, y + 15, 220, 20);
+    y += 40;
     
     // Log section
-    logGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 120);
+    logGroup.setBounds(MARGIN, y, getWidth() - 2 * MARGIN, 100);
     y += 25;
     
-    logTextEditor.setBounds(MARGIN + 10, y, getWidth() - 2 * MARGIN - 20, 70);
-    y += 75;
+    logTextEditor.setBounds(MARGIN + 10, y, getWidth() - 2 * MARGIN - 20, 50);
+    y += 55;
     
-    clearLogButton.setBounds(MARGIN + 10, y, 100, COMPONENT_HEIGHT);
+    clearLogButton.setBounds(MARGIN + 10, y, 120, COMPONENT_HEIGHT);
 }
 
 //==============================================================================
