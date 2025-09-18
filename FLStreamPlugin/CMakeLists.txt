@@ -127,3 +127,17 @@ if(APPLE)
         "-framework SystemConfiguration"
     )
 endif()
+
+# WebSocket connection test
+add_executable(websocket_test
+    tests/websocket_test.cpp
+    Source/WebSocketServer_JUCE.cpp
+)
+target_link_libraries(websocket_test PRIVATE
+    juce::juce_core
+    juce::juce_events
+    juce::juce_audio_basics
+    juce::juce_audio_utils
+    juce::juce_gui_basics
+)
+target_include_directories(websocket_test PRIVATE Source)

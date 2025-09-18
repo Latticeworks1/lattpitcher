@@ -498,11 +498,11 @@ bool FLStreamWebSocketServer::performWebSocketHandshake(StreamingSocket* socket,
     
     // Send handshake response
     String response = 
-        "HTTP/1.1 101 Switching Protocols\\r\\n"
-        "Upgrade: websocket\\r\\n"
-        "Connection: Upgrade\\r\\n"
-        "Sec-WebSocket-Accept: " + responseKey + "\\r\\n"
-        "\\r\\n";
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: " + responseKey + "\r\n"
+        "\r\n";
     
     return socket->write(response.toRawUTF8(), response.getNumBytesAsUTF8()) > 0;
 }
