@@ -191,3 +191,4 @@ PitchDetectorProcessor (AudioProcessor)
 ### Mobile Considerations  
 - Fullscreen mode enabled for iOS/Android builds
 - Touch-friendly control sizing in responsive layouts
+- reflect, plan, think, research, act, reflect on action, think, proceed or loop back. Always use batch scripting when you notice patterns where you can make the change surgiclaly and automatically at once without memssing things up . mac native automatically handle mac or windows or whatver linux autoatmaitcal , one clean tiny code for ultimate developer

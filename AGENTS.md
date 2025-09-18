@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/`: Rust crate `pitch_detector` with real‑time pitch detection and inline unit tests.
+- `src/`: Rust crate `pitch_detector` (real‑time pitch DSP) with inline unit tests.
 - `PitchDetector/`: JUCE/CMake C++ GUI app scaffolding and sources.
 - `JUCE/`: Vendored JUCE framework (do not modify unless updating vendor).
 - `target/`: Rust build artifacts (ignored by Git).
@@ -13,21 +13,20 @@
 - Rust run: `cargo run` — CLI demo; prints detected pitch per chunk.
 - C++/JUCE configure: `cmake -S PitchDetector -B PitchDetector/build -DCMAKE_BUILD_TYPE=Debug`.
 - C++/JUCE build: `cmake --build PitchDetector/build`.
+- Lint/format: `cargo fmt && cargo clippy -D warnings` before pushing.
 
 ## Coding Style & Naming Conventions
-- Rust: run `cargo fmt` and `cargo clippy -D warnings` before pushing.
-  - Naming: `snake_case` (functions/vars), `PascalCase` (types), `SCREAMING_SNAKE_CASE` (consts).
-- C++: follow `.clang-tidy` in `JUCE/`; prefer `clang-format` if configured.
-  - Naming: `CamelCase` (classes/types), `lower_snake_case` (functions/vars).
+- Rust: `snake_case` (functions/vars), `PascalCase` (types), `SCREAMING_SNAKE_CASE` (consts). Use `rustfmt` defaults.
+- C++: follow `JUCE/.clang-tidy`; prefer `clang-format` if configured. `CamelCase` (classes/types), `lower_snake_case` (functions/vars).
 
 ## Testing Guidelines
-- Framework: Rust built‑in tests (`#[test]`) colocated near logic in `src/`.
-- Tolerance: use DSP‑friendly checks (e.g., frequency within ±5%).
-- Naming: group with `mod tests { ... }`; future integration tests under `tests/`.
-- Run: `cargo test` locally; include failing repros when fixing bugs.
+- Framework: Rust built‑in `#[test]` colocated near logic in `src/`.
+- Tolerance: Use DSP‑friendly checks (e.g., frequency within ±5%).
+- Naming: Group with `mod tests { ... }`; future integration tests live under `tests/`.
+- Run: `cargo test`; when fixing bugs, include a failing repro.
 
 ## Commit & Pull Request Guidelines
-- Commits: imperative, concise subject ≤72 chars; scope prefix when helpful (e.g., `rust:`, `juce:`). Include rationale, trade‑offs, and testing notes.
+- Commits: imperative, concise subject ≤72 chars; add scope when useful (e.g., `rust:`, `juce:`). Include rationale, trade‑offs, and testing notes.
 - PRs: clear description, linked issues, repro steps; screenshots/GIFs for UI changes. Ensure code is formatted, lints are clean, and tests pass.
 
 ## Security & Configuration Tips

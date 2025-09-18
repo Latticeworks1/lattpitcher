@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Web Autotune - Minimal</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; background:#111; color:#eee; margin:0; padding:24px; }
+    .container { max-width:720px; margin:0 auto; }
+    h1 { color:#00ffff; font-size:22px; margin:0 0 16px; }
+    .display { background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:16px; margin-bottom:16px; }
+    .row { display:flex; justify-content:space-between; gap:16px; margin:8px 0; }
+    .meter { width:100%; height:8px; background:#333; border-radius:4px; overflow:hidden; }
+    .meter > div { height:100%; width:0%; background:linear-gradient(90deg,#0f0,#ff0,#f00); transition:width 80ms; }
+    button { padding:10px 16px; border-radius:6px; border:1px solid #2a2a2a; background:#222; color:#eee; cursor:pointer; }
+    button.primary { background:#065f5f; border-color:#0aa; }
+    .small { font-size:12px; color:#aaa; }
+    .status { margin-top:10px; min-height:22px; color:#9f9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Web Autotune (Minimal Demo)</h1>
+    <div class="display">
+      <div class="row"><div>Note</div><div id="note">--</div></div>
+      <div class="row"><div>Frequency</div><div><span id="freq">0.0</span> Hz</div></div>
+      <div class="row"><div>Cents</div><div id="cents">0</div></div>
+      <div class="row"><div>Level</div><div class="meter"><div id="level"></div></div></div>
+    </div>
+    <div class="row">
+      <button id="start" class="primary">Start (Oscillator)</button>
+      <button id="stop">Stop</button>
+      <span class="small">Tip: Add ?mic=1 to use microphone</span>
+    </div>
+    <div class="display">
+      <div class="row">
+        <label><input type="checkbox" id="auto" checked /> Autotune</label>
+        <label>Mix <input type="range" id="mix" min="0" max="1" step="0.01" value="1" /></label>
+      </div>
+      <div class="row">
+        <label>Strength <input type="range" id="strength" min="0" max="1" step="0.01" value="0.8" /></label>
+        <label>Speed <input type="range" id="speed" min="0" max="1" step="0.01" value="0.5" /></label>
+      </div>
+      <div class="row">
+        <label>Scale
+          <select id="scale">
+            <option value="chromatic">Chromatic</option>
+            <option value="major" selected>Major</option>
+            <option value="minor">Minor</option>
+          </select>
+        </label>
+        <label>Root
+          <select id="root">
+            <option value="0">C</option>
+            <option value="1">C#</option>
+            <option value="2">D</option>
+            <option value="3">D#</option>
+            <option value="4">E</option>
+            <option value="5">F</option>
+            <option value="6">F#</option>
+            <option value="7">G</option>
+            <option value="8">G#</option>
+            <option value="9">A</option>
+            <option value="10">A#</option>
+            <option value="11">B</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+  <script type="module" src="web-autotune.js"></script>
+</body>
+</html>

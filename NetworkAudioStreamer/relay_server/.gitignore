@@ -1,0 +1,51 @@
+# Build directories
+build/
+build_deploy/
+relay_deploy/
+
+# Compiled binaries
+relay_server
+ultra_relay_server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+server.log
+
+# Temporary files
+*.tmp
+*.temp
+core.*
+
+# Package files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# Testing
+test_results/
+coverage/
+*.gcov
+*.gcda
+*.gcno

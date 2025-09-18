@@ -1,0 +1,14 @@
+{
+  "rules_disabled": [],
+  "severity_threshold": "HIGH",
+  "audio_file_patterns": [
+    "*audio*",
+    "*dsp*",
+    "*process*"
+  ],
+  "exclude_paths": [
+    "third_party/",
+    "build/",
+    ".git/"
+  ]
+}

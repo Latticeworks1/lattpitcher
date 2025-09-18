@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FL Studio Remote Vocal Studio</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🎤 FL Studio Remote Vocal Studio</h1>
+            <p class="subtitle">Professional real-time vocal collaboration for FL Studio</p>
+        </header>
+
+        <div class="connection-panel">
+            <h2>Connection Settings</h2>
+            <div class="input-group">
+                <label for="serverAddress">FL Studio Server:</label>
+                <input type="text" id="serverAddress" value="localhost:9001" placeholder="localhost:9001">
+            </div>
+            <div class="input-group">
+                <label for="roomId">Room ID:</label>
+                <input type="text" id="roomId" value="FL-ROOM-001" placeholder="Enter room code">
+            </div>
+            <div class="input-group">
+                <label for="userName">Your Name:</label>
+                <input type="text" id="userName" value="" placeholder="Vocalist name">
+            </div>
+            <button id="connectBtn" class="btn btn-primary">Connect to FL Studio</button>
+        </div>
+
+        <div id="connectionStatus" class="status-panel disconnected">
+            <div class="status-indicator"></div>
+            <span id="statusText">Disconnected</span>
+        </div>
+
+        <div class="recording-panel" id="recordingPanel" style="display: none;">
+            <h2>Recording Controls</h2>
+            <div class="recording-controls">
+                <button id="recordBtn" class="btn btn-record" disabled>🎤 Start Recording</button>
+                <button id="pauseBtn" class="btn btn-pause" disabled>⏸️ Pause</button>
+                <button id="stopBtn" class="btn btn-stop" disabled>⏹️ Stop</button>
+            </div>
+            
+            <div class="audio-meters">
+                <div class="meter-group">
+                    <label>Input Level</label>
+                    <div class="meter-container">
+                        <canvas id="inputMeter" width="200" height="20"></canvas>
+                        <span id="inputLevel">-∞ dB</span>
+                    </div>
+                </div>
+                <div class="meter-group">
+                    <label>Output Level</label>
+                    <div class="meter-container">
+                        <canvas id="outputMeter" width="200" height="20"></canvas>
+                        <span id="outputLevel">-∞ dB</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="audio-controls" id="audioControls" style="display: none;">
+            <h2>Audio Settings</h2>
+            <div class="controls-grid">
+                <div class="control-group">
+                    <label for="inputGain">Input Gain</label>
+                    <input type="range" id="inputGain" min="0" max="200" value="100" class="slider">
+                    <span id="inputGainValue">100%</span>
+                </div>
+                <div class="control-group">
+                    <label for="monitorVolume">Monitor Volume</label>
+                    <input type="range" id="monitorVolume" min="0" max="100" value="50" class="slider">
+                    <span id="monitorVolumeValue">50%</span>
+                </div>
+                <div class="control-group">
+                    <label for="noiseGate">Noise Gate</label>
+                    <input type="range" id="noiseGate" min="-60" max="-20" value="-40" class="slider">
+                    <span id="noiseGateValue">-40 dB</span>
+                </div>
+                <div class="control-group">
+                    <label for="lowCut">Low Cut</label>
+                    <input type="range" id="lowCut" min="20" max="200" value="80" class="slider">
+                    <span id="lowCutValue">80 Hz</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="session-info" id="sessionInfo" style="display: none;">
+            <h2>Session Information</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>Sample Rate:</label>
+                    <span id="sampleRate">48000 Hz</span>
+                </div>
+                <div class="info-item">
+                    <label>Latency:</label>
+                    <span id="latency">-- ms</span>
+                </div>
+                <div class="info-item">
+                    <label>Network Quality:</label>
+                    <span id="networkQuality">--</span>
+                </div>
+                <div class="info-item">
+                    <label>Connected Users:</label>
+                    <span id="userCount">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="log-panel">
+            <h3>Activity Log</h3>
+            <div id="logContent" class="log-content"></div>
+            <button id="clearLogBtn" class="btn btn-secondary">Clear Log</button>
+        </div>
+    </div>
+
+    <script src="audio-processor.js"></script>
+    <script src="fl-vocal-client.js"></script>
+</body>
+</html>

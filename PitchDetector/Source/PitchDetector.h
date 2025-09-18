@@ -10,6 +10,7 @@
 #include <memory>
 #include <array>
 #include <map>
+#include <complex>
 
 using namespace juce;
 
@@ -24,6 +25,32 @@ namespace PitchDetectorConstants {
     static constexpr int PROCESSING_FIFO_SIZE = 8192;
     static constexpr int GUI_FIFO_SIZE = 64;
     static constexpr int PITCH_DETECTION_WINDOW = 4096;
+    
+    // YIN Algorithm Parameters - Optimized for vocal detection
+    static constexpr int YIN_FRAME_SIZE = 4096;            // N = 4096 samples (better frequency resolution)
+    static constexpr int YIN_HOP_SIZE = 256;               // H = 256 samples
+    static constexpr double YIN_REFERENCE_FREQ = 440.0;    // f_ref = 440 Hz (A4)
+    static constexpr float YIN_EPSILON = 1e-12f;           // Numerical safety for divisions
+    static constexpr float YIN_VOICING_THRESHOLD = 0.35f;  // Lower threshold for better sensitivity
+    static constexpr float YIN_MIN_FREQ = 80.0f;           // Vocal range minimum
+    static constexpr float YIN_MAX_FREQ = 800.0f;          // Vocal range maximum (fundamental)
+    
+    // Causal Smoothing Parameters
+    static constexpr float LAMBDA_MIN = 0.2f;              // Minimum smoothing coefficient
+    static constexpr float LAMBDA_MAX = 0.9f;              // Maximum smoothing coefficient
+    
+    // MIDI Emission Parameters
+    static constexpr float MIDI_GATE_ON_THRESHOLD = 0.6f;  // θ_on for note activation
+    static constexpr float MIDI_GATE_OFF_THRESHOLD = 0.4f; // θ_off for note deactivation
+    static constexpr int MIDI_MIN_VELOCITY = 1;            // Minimum MIDI velocity
+    static constexpr int MIDI_MAX_VELOCITY = 127;          // Maximum MIDI velocity
+    
+    // Phase Vocoder Parameters
+    static constexpr int PV_FFT_SIZE = 2048;               // STFT frame size
+    static constexpr int PV_HOP_SIZE = 256;                // Analysis hop size
+    static constexpr int PV_OVERLAP_SIZE = 1792;           // Overlap size (N - H)
+    static constexpr float PV_ALGORITHMIC_LATENCY_MS = 37.5f; // (N-H)/Fs at 48kHz
+    static constexpr int LAGRANGE_INTERPOLATOR_TAPS = 8;   // 8-tap interpolation
     
     // Pitch Detection Parameters  
     static constexpr float DEFAULT_NOISE_THRESHOLD = 0.005f;
@@ -85,6 +112,62 @@ struct DetectionResult
     float audioLevel = 0.0f;
     NoteInfo noteInfo;
     bool hasNewData = false;
+};
+
+struct YinResult
+{
+    float frequency = 0.0f;         // f_in[k] - instantaneous fundamental frequency
+    float voicingStrength = 0.0f;   // v[k] - voicing strength (1 - C_k(τ0))
+    float centsInput = 0.0f;        // c_in[k] - input in cents relative to reference
+    float centsTarget = 0.0f;       // c_tgt[k] - target after chromatic snapping
+    float centsDeviation = 0.0f;    // Δc[k] - deviation before smoothing
+    float centsSmoothed = 0.0f;     // Δĉ[k] - smoothed deviation
+    float targetFrequency = 0.0f;   // f̂_tgt[k] - smoothed target frequency
+    float pitchRatio = 1.0f;        // r[k] - pitch shift ratio
+    bool isVoiced = false;          // Whether signal is considered voiced
+    int frameIndex = 0;             // k - frame index for debugging
+};
+
+struct NoteHistoryEntry
+{
+    String noteName;                // Note name (C4, D#5, etc.)
+    float frequency = 0.0f;         // Detected frequency
+    float centsDeviation = 0.0f;    // Cents from perfect pitch
+    float voicingStrength = 0.0f;   // Detection confidence
+    Time timestamp;                 // When the note was detected
+    float duration = 0.0f;          // How long the note lasted (in seconds)
+    bool isActive = false;          // Whether note is currently playing
+    
+    NoteHistoryEntry() : timestamp(Time::getCurrentTime()) {}
+    NoteHistoryEntry(const String& note, float freq, float cents, float voicing)
+        : noteName(note), frequency(freq), centsDeviation(cents), 
+          voicingStrength(voicing), timestamp(Time::getCurrentTime()) {}
+};
+
+struct PianoRollNote
+{
+    int midiNote = 60;              // MIDI note number (C4 = 60)
+    float startTime = 0.0f;         // Start time in seconds
+    float duration = 0.0f;          // Duration in seconds  
+    float velocity = 1.0f;          // Note velocity (0.0-1.0)
+    float pitchAccuracy = 0.0f;     // Cents deviation from perfect
+    bool isActive = false;          // Currently playing
+    
+    PianoRollNote() = default;
+    PianoRollNote(int note, float start, float vel = 1.0f, float accuracy = 0.0f)
+        : midiNote(note), startTime(start), velocity(vel), pitchAccuracy(accuracy), isActive(true) {}
+};
+
+struct SpectrogramData
+{
+    std::vector<float> magnitudes;  // FFT magnitude data
+    Time timestamp;                 // When this frame was captured
+    float maxMagnitude = 0.0f;      // Peak magnitude for scaling
+    double sampleRate = PitchDetectorConstants::DEFAULT_SAMPLE_RATE; // Actual sample rate when recorded
+    
+    SpectrogramData() : timestamp(Time::getCurrentTime()) {}
+    SpectrogramData(const std::vector<float>& mags, float maxMag, double sr = PitchDetectorConstants::DEFAULT_SAMPLE_RATE)
+        : magnitudes(mags), timestamp(Time::getCurrentTime()), maxMagnitude(maxMag), sampleRate(sr) {}
 };
 
 struct TelemetryData
@@ -181,6 +264,12 @@ public:
     float detectPitchHPS(const float* buffer, int size, double sampleRate);
     float detectPitchCepstrum(const float* buffer, int size, double sampleRate);
     
+    // Advanced YIN with complete analysis pipeline
+    YinResult detectPitchYinAdvanced(const float* buffer, int size, double sampleRate, int frameIndex);
+    float quadraticInterpolation(float yMinus1, float y0, float yPlus1, int peakIndex);
+    void applyCausalSmoothing(YinResult& result);
+    void updateMidiState(const YinResult& result);
+    
     void setNoiseThreshold(float threshold) { noiseThreshold = threshold; }
     void setFrequencyRange(float minFreq, float maxFreq) { minFrequency = minFreq; maxFrequency = maxFreq; }
     void setCorrelationThreshold(float threshold) { correlationThresholdFactor = threshold; }
@@ -224,6 +313,17 @@ private:
     int failedDetections = 0;
     
     TelemetryData telemetry;
+    
+    // YIN algorithm state
+    float previousSmoothedDeviation = 0.0f;  // Δĉ[k-1] for causal smoothing
+    bool previousNoteState = false;          // Previous MIDI note state
+    int currentMidiNote = -1;                // Current MIDI note number (-1 = no note)
+    
+    // Fixed-size YIN buffers - no dynamic allocation
+    static constexpr int MAX_YIN_LAG = static_cast<int>(PitchDetectorConstants::DEFAULT_SAMPLE_RATE / PitchDetectorConstants::YIN_MIN_FREQ) + 1;
+    std::array<float, MAX_YIN_LAG> yinDifferenceFunction;   // d_k(τ) buffer
+    std::array<float, MAX_YIN_LAG> yinCumulativeMean;       // C_k(τ) buffer
+    std::array<float, 4096> hannWindow;  // Precomputed Hann window (matches YIN_FRAME_SIZE)
     
     float autocorrelationPitchDetection(const float* buffer, int size, double sampleRate);
     float applyStabilityFilter(float newFrequency);
@@ -300,6 +400,11 @@ private:
     void processPSOLA(float* audioData, int numSamples, float pitchRatio);
     void processPhaseVocoder(float* audioData, int numSamples, float pitchRatio);
     
+    // Phase vocoder utilities
+    void initializePhaseVocoder();
+    float principalArgument(float phase);  // princarg() phase unwrapping
+    void lagrangeInterpolate8(const float* input, float* output, int outputLength, const float* timeMap);
+    
     // State
     AutotuneSettings settings;
     double sampleRate = PitchDetectorConstants::DEFAULT_SAMPLE_RATE;
@@ -307,6 +412,20 @@ private:
 
     EngineMode engineMode = EngineMode::Auto;
     float voicingThreshold = 0.6f;
+    
+    // Phase Vocoder STFT state
+    std::unique_ptr<juce::dsp::FFT> analysisFFT;
+    std::unique_ptr<juce::dsp::FFT> synthesisFFT;
+    std::vector<std::complex<float>> analysisFrame;    // X_k[m]
+    std::vector<std::complex<float>> synthesisFrame;   // Y_k[m]
+    std::vector<float> analysisWindow;                 // Precomputed Hann window
+    std::vector<float> synthesisWindow;                // Synthesis window
+    std::vector<float> previousPhase;                  // ∠X_{k-1}[m] for phase unwrapping
+    std::vector<float> synthesisPhase;                 // ∠Y_k[m] accumulated phase
+    std::vector<float> instantaneousFreq;              // ω_k[m] per bin
+    std::vector<float> overlapAddBuffer;               // Overlap-add synthesis buffer
+    std::vector<float> temporaryBuffer;                // For resampling intermediate signal z[n]
+    int analysisFrameCounter = 0;                      // k - current frame index
     
     bool lpcFormantMode = false;
     float formantScalingBeta = 0.35f;
@@ -357,10 +476,9 @@ private:
         bool isVibratoActive = false;
         float currentStrength = 0.0f;
         
-        VibratoDetectionState()
+        VibratoDetectionState() : centsBuffer(bufferSize, 0.0f), filteredBuffer(bufferSize, 0.0f)
         {
-            centsBuffer.resize(bufferSize, 0.0f);
-            filteredBuffer.resize(bufferSize, 0.0f);
+            // Pre-allocate fixed-size buffers - no resize() calls
         }
     } vibratoState;
     
@@ -374,26 +492,34 @@ private:
 // GUI COMPONENTS
 //==============================================================================
 
-class CircularPitchTuner : public Component
+class AutoTunePitchDisplay : public Component
 {
 public:
-    CircularPitchTuner();
+    AutoTunePitchDisplay();
     void paint(Graphics& g) override;
     void resized() override;
     
     void updatePitch(float frequency, const NoteInfo& noteInfo);
     void setTargetNote(const String& noteName);
+    void setCorrectionStrength(float strength) { correctionStrength = strength; }
+    void setScaleType(int scale) { currentScale = scale; }
     
 private:
     float currentCents = 0.0f;
+    float targetCents = 0.0f;
+    float correctionStrength = 0.8f;
     String currentNote = "--";
     String targetNote = "A";
+    int currentScale = 0; // 0=Chromatic, 1=Major, 2=Minor, etc.
     bool hasValidPitch = false;
+    bool isCorrectingPitch = false;
     
-    static constexpr float radius = PitchDetectorConstants::TUNER_RADIUS;
-    static constexpr float needleLength = PitchDetectorConstants::TUNER_NEEDLE_LENGTH;
+    // Auto-Tune style pitch correction display
+    void drawPitchWheel(Graphics& g, Rectangle<float> area);
+    void drawScaleGrid(Graphics& g, Rectangle<float> area);
+    void drawCorrectionIndicator(Graphics& g, Rectangle<float> area);
     
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CircularPitchTuner)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AutoTunePitchDisplay)
 };
 
 class AutotuneControls : public Component
@@ -419,7 +545,129 @@ private:
     
     AudioProcessor* processor = nullptr;
 
+    using SliderAttachment = AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment = AudioProcessorValueTreeState::ButtonAttachment;
+    std::unique_ptr<SliderAttachment> strengthAttachment;
+    std::unique_ptr<SliderAttachment> speedAttachment;
+    std::unique_ptr<SliderAttachment> mixAttachment;
+    std::unique_ptr<ButtonAttachment> autotuneEnableAttachment;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AutotuneControls)
+};
+
+class PianoRollDisplay : public Component, private Timer
+{
+public:
+    PianoRollDisplay();
+    ~PianoRollDisplay() override;
+    
+    void paint(Graphics& g) override;
+    void resized() override;
+    
+    void addNote(int midiNote, float startTime, float velocity, float pitchAccuracy);
+    void updateCurrentNote(int midiNote, float accuracy);
+    void endCurrentNote();
+    void clearHistory();
+    float getCurrentTime() const { return currentTime; }
+
+    // Recording API
+    void startRecording() { isRecording = true; recordedNotes.clear(); recordingStartTime = currentTime; }
+    void stopRecording() { isRecording = false; }
+    bool isRecordingActive() const { return isRecording; }
+    const std::vector<PianoRollNote>& getRecordedNotes() const { return recordedNotes; }
+    bool exportRecordingToCSV(const File& file) const;
+    
+    void setTimeRange(float seconds) { timeRangeSeconds = seconds; }
+    void setNoteRange(int minNote, int maxNote) { minMidiNote = minNote; maxMidiNote = maxNote; }
+    
+private:
+    void timerCallback() override;
+    void drawPianoKeys(Graphics& g, Rectangle<int> keyArea);
+    void drawPianoRoll(Graphics& g, Rectangle<int> rollArea);
+    void drawGridLines(Graphics& g, Rectangle<int> area);
+    Colour getNoteColour(float pitchAccuracy, float velocity);
+    int frequencyToMidiNote(float frequency);
+    String getMidiNoteName(int midiNote) const;
+    bool isBlackKey(int midiNote);
+    
+    std::vector<PianoRollNote> pianoRollNotes;
+    float timeRangeSeconds = 10.0f;     // Time range to display
+    int minMidiNote = 48;               // C3
+    int maxMidiNote = 84;               // C6
+    float currentTime = 0.0f;           // Current playback position
+    bool isRecording = false;           // Recording flag
+    float recordingStartTime = 0.0f;    // Recording start offset
+    std::vector<PianoRollNote> recordedNotes; // Persistent recording store
+    
+    static constexpr int PIANO_KEY_WIDTH = 60;
+    static constexpr int NOTE_HEIGHT = 12;
+    static constexpr float PIXELS_PER_SECOND = 60.0f;
+    
+    Time sessionStartTime;
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollDisplay)
+};
+
+// Small strip showing recent cents deviation over time
+class PitchTrackingStrip : public Component
+{
+public:
+    PitchTrackingStrip() { setInterceptsMouseClicks(false, false); }
+    ~PitchTrackingStrip() override = default;
+
+    void paint(Graphics& g) override;
+    void resized() override {}
+
+    void addCents(float cents);
+    void clear() { sampleCount = 0; writeIndex = 0; }
+    void setRange(float centsRange) { range = jmax(10.0f, centsRange); }
+
+private:
+    // Fixed-size circular buffer - NO dynamic allocation
+    static constexpr int MAX_HISTORY_SAMPLES = 512;
+    std::array<float, MAX_HISTORY_SAMPLES> historyBuffer;
+    std::atomic<int> writeIndex{0};
+    std::atomic<int> sampleCount{0};
+    float range = 50.0f;       // +/- cents range for scaling
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchTrackingStrip)
+};
+
+class SpectrogramDisplay : public Component, private Timer
+{
+public:
+    SpectrogramDisplay();
+    ~SpectrogramDisplay() override;
+    
+    void paint(Graphics& g) override;
+    void resized() override;
+    
+    void addSpectrogramData(const float* audioBuffer, int bufferSize, double sampleRate);
+    void clearHistory();
+    
+    void setFrequencyRange(float minFreq, float maxFreq) { minFrequency = minFreq; maxFrequency = maxFreq; }
+    void setTimeRange(float seconds) { timeRangeSeconds = seconds; }
+    
+private:
+    void timerCallback() override;
+    void performFFT(const float* audioBuffer, int bufferSize);
+    Colour getSpectrogramColour(float magnitude, float maxMag);
+    float frequencyToBin(float frequency, double sampleRate, int fftSize);
+    
+    std::vector<SpectrogramData> spectrogramHistory;
+    std::unique_ptr<juce::dsp::FFT> spectrogramFFT;
+    std::vector<float> fftBuffer;
+    std::vector<float> windowBuffer;
+    
+    float minFrequency = 80.0f;         // Minimum frequency to display
+    float maxFrequency = 2000.0f;       // Maximum frequency to display
+    float timeRangeSeconds = 5.0f;      // Time range for waterfall display
+    int maxHistoryFrames = 200;         // Maximum spectrogram frames to keep
+    
+    static constexpr int FFT_SIZE = 1024;
+    static constexpr int WATERFALL_HEIGHT = 3;  // Height of each waterfall line
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrogramDisplay)
 };
 
 class PitchDetectorGUI : public Component, private Timer
@@ -442,8 +690,8 @@ public:
     void updatePitchDisplay(float frequency, const NoteInfo& noteInfo);
     void updateAudioLevel(float level);
     
-    void updateDebugInfo(const String& debugText) { /* Not implemented */ }
-    void setAudioDeviceInfo(const String& deviceName, double sampleRate, int bufferSize) { /* Not implemented */ }
+    void updateDebugInfo([[maybe_unused]] const String& debugText) { /* Not implemented */ }
+    void setAudioDeviceInfo([[maybe_unused]] const String& deviceName, [[maybe_unused]] double sampleRate, [[maybe_unused]] int bufferSize) { /* Not implemented */ }
     
     PitchDetectionEngine& getEngine() { return engine; }
     
@@ -454,8 +702,17 @@ public:
     static constexpr int fifoSize = PitchDetectorConstants::GUI_FIFO_SIZE;
     float pitchFifo[fifoSize];
     float levelFifo[fifoSize];
-    std::atomic<int> fifoWriteIndex { 0 };
-    std::atomic<int> fifoReadIndex { 0 };
+    std::atomic<int> fifoWriteIndex{0};
+    std::atomic<int> fifoReadIndex{0};
+    
+    SpectrogramDisplay spectrogram;
+    
+    // Piano roll access methods for recording
+    void clearPianoRollHistory() { pianoRoll.clearHistory(); }
+    void startPianoRollRecording() { pianoRoll.startRecording(); }
+    void stopPianoRollRecording() { pianoRoll.stopRecording(); }
+    const std::vector<PianoRollNote>& getPianoRollRecording() const { return pianoRoll.getRecordedNotes(); }
+    bool exportPianoRollToCSV(const File& file) const { return pianoRoll.exportRecordingToCSV(file); }
     
 private:
     void timerCallback() override;
@@ -467,7 +724,9 @@ private:
     double currentSampleRate = PitchDetectorConstants::DEFAULT_SAMPLE_RATE;
     int currentBufferSize = PitchDetectorConstants::DEFAULT_BUFFER_SIZE;
     
-    CircularPitchTuner circularTuner;
+    AutoTunePitchDisplay autoTuneDisplay;
+    PitchTrackingStrip trackingStrip;
+    PianoRollDisplay pianoRoll;
     Label noteNameLabel;
     Label frequencyLabel;
     Label centsLabel;
@@ -526,8 +785,6 @@ public:
     AudioProcessorValueTreeState& getParameterTreeState() { return parameterTreeState; }
     void parameterChanged(const String& parameterID, float newValue) override;
 
-    bool isUsingNeuralAutotune() const { return useNeuralAutotune; }
-
 private:
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void pushSamplesToFifo(const float* samples, int numSamples);
@@ -540,21 +797,22 @@ private:
     static constexpr int fifoSize = PitchDetectorConstants::PITCH_DETECTION_WINDOW;
     float fifo[fifoSize];
     float processingBuffer[fifoSize];
-    int fifoIndex = 0;
-    std::atomic<bool> nextBlockReady { false };
-    int audioBlockCount = 0;
+    std::atomic<int> fifoIndex{0};
+    std::atomic<bool> nextBlockReady{false};
+    std::atomic<int> audioBlockCount{0};
 
     CriticalSection resultLock;
     DetectionResult latestResult;
-
+    
+    PitchDetectionEngine pitchEngine;
     std::unique_ptr<AutotuneEngine> autotuneEngine;
     std::vector<float> pitchBuffer;
     bool autotuneEnabled = true;
     
     AudioProcessorValueTreeState parameterTreeState;
-    bool useNeuralAutotune = false;
     
 public:
+    AudioProcessorValueTreeState& getValueTreeState() { return parameterTreeState; }
     PitchDetectorGUI* gui = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PitchDetectorProcessor)
@@ -576,6 +834,10 @@ public:
 private:
     PitchDetectorProcessor& audioProcessor;
     PitchDetectorGUI gui;
+    AutotuneControls autotuneControls;
+    TextButton recordButton;
+    TextButton stopButton;
+    TextButton exportCsvButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PitchDetectorEditor)
 };
@@ -615,8 +877,8 @@ private:
     static constexpr int fifoSize = PitchDetectorConstants::PROCESSING_FIFO_SIZE;
     float fifo[fifoSize];
     float processingBuffer[fifoSize];
-    int fifoIndex = 0;
-    bool nextBlockReady = false;
+    std::atomic<int> fifoIndex{0};
+    std::atomic<bool> nextBlockReady{false};
     
     PitchDetectorGUI gui;
     PitchDetectionEngine engine;
@@ -625,7 +887,7 @@ private:
     TextButton permissionButton;
     TextButton audioSettingsButton;
     
-    int audioBlockCount = 0;
+    std::atomic<int> audioBlockCount{0};
     std::atomic<float> currentAudioLevel{0.0f};
     bool audioSetupFailed = true;
     bool disableAudio = false;

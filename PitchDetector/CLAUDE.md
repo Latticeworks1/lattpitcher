@@ -133,7 +133,6 @@ ctest --verbose
 VST automation parameters are managed through `AudioProcessorValueTreeState`:
 - Correction strength/speed sliders with proper automation curves
 - Scale selection with DAW recall
-- Neural mode toggles with real-time switching
 - Mix controls with wet/dry processing
 
 ### Performance Profiling

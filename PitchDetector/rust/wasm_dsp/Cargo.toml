@@ -1,0 +1,10 @@
+[package]
+name = "wasm_dsp"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+# No external dependencies; exports plain C ABI so we can call from JS without wasm-bindgen
+

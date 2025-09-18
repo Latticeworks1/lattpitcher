@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGPU FFT Demo</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; }
+      pre { background: #111; color: #0f0; padding: 12px; border-radius: 6px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>WebGPU FFT Demo</h1>
+    <div id="status">Initializing…</div>
+    <pre id="log"></pre>
+    <script src="../web_audio_engine.js"></script>
+    <script>
+      const logEl = document.getElementById('log');
+      const statusEl = document.getElementById('status');
+      const log = (...args) => { logEl.textContent += args.join(' ') + '\n'; };
+
+      async function main() {
+        if (!('gpu' in navigator)) {
+          statusEl.textContent = 'WebGPU not available in this browser.';
+          return;
+        }
+        const adapter = await navigator.gpu.requestAdapter();
+        const device = await adapter.requestDevice();
+        statusEl.textContent = 'WebGPU ready. Running FFT…';
+
+        const size = 1024;
+        const sr = 48000;
+        const freq = 1000; // 1 kHz test tone
+        const data = new Float32Array(size);
+        for (let i = 0; i < size; i++) {
+          data[i] = Math.sin(2 * Math.PI * freq * (i / sr));
+        }
+
+        const pipelines = await window.createFFTPipeline(device, size);
+        const mag = await window.runFFT(device, pipelines, data, false);
+        // Find peak index and frequency
+        let peakIdx = 0, peakVal = -Infinity;
+        for (let i = 0; i < mag.length; i++) {
+          if (mag[i] > peakVal) { peakVal = mag[i]; peakIdx = i; }
+        }
+        const binFreq = sr / size; // FFT bin resolution
+        log('Peak bin:', peakIdx, '≈', (peakIdx * binFreq).toFixed(2), 'Hz');
+        log('First 16 magnitudes:', Array.from(mag.slice(0, 16)).map(v => v.toFixed(3)).join(', '));
+        statusEl.textContent = 'Done. Check log.';
+      }
+
+      main().catch(err => {
+        statusEl.textContent = 'Error: ' + err;
+        console.error(err);
+      });
+    </script>
+  </body>
+  </html>

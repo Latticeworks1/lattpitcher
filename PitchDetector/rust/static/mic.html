@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Mic + Rust DSP</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; }
+      .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+      .big { font-size: 28px; font-weight: 600; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      canvas { background: #111; border-radius: 6px; }
+      label { user-select: none; }
+    </style>
+  </head>
+  <body>
+    <h1>Microphone + Rust WASM DSP</h1>
+    <div class="row">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <label><input type="checkbox" id="dspToggle" /> Enable Rust DSP</label>
+      <label>Gain <input id="gain" type="range" min="0" max="2" step="0.01" value="1.0" /></label>
+      <span id="status" class="mono">Idle</span>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <div>Frequency</div>
+        <div id="freq" class="big">--.-- Hz</div>
+      </div>
+      <div class="card">
+        <div>Note</div>
+        <div id="note" class="big">--</div>
+      </div>
+      <div class="card">
+        <div>Confidence</div>
+        <div id="conf" class="big">0.00</div>
+      </div>
+      <div class="card">
+        <div>Cents</div>
+        <div id="cents" class="big">0</div>
+      </div>
+    </div>
+    <div class="row">
+      <canvas id="scope" width="640" height="120"></canvas>
+    </div>
+
+    <script src="/web_audio_engine.js"></script>
+    <script>
+      // Copy bundled engine to static folder if needed; otherwise, reference from project root.
+    </script>
+    <script>
+      const statusEl = document.getElementById('status');
+      const freqEl = document.getElementById('freq');
+      const noteEl = document.getElementById('note');
+      const confEl = document.getElementById('conf');
+      const centsEl = document.getElementById('cents');
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const dspToggle = document.getElementById('dspToggle');
+      const gainEl = document.getElementById('gain');
+      const scope = document.getElementById('scope');
+      const ctx2d = scope.getContext('2d');
+
+      let ac, analyser, src, proc, rafId;
+      let engine;
+      let wasmInst = null;
+      let workPtr = 0;
+
+      function drawScope(data) {
+        const W = scope.width, H = scope.height;
+        ctx2d.clearRect(0, 0, W, H);
+        ctx2d.strokeStyle = '#0f0';
+        ctx2d.beginPath();
+        const mid = H / 2;
+        for (let i = 0; i < data.length; i++) {
+          const x = (i / (data.length - 1)) * W;
+          const y = mid + data[i] * (H / 2 - 4);
+          if (i === 0) ctx2d.moveTo(x, y); else ctx2d.lineTo(x, y);
+        }
+        ctx2d.stroke();
+      }
+
+      function midiNoteToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+      function updateUI(result) {
+        if (!result || !result.frequency) {
+          statusEl.textContent = 'Listening…';
+          return;
+        }
+        const freq = result.frequency;
+        const note = result.note;
+        freqEl.textContent = freq.toFixed(2) + ' Hz';
+        noteEl.textContent = note ? `${note.name}${note.octave}` : '--';
+        confEl.textContent = (result.confidence ?? 0).toFixed(2);
+        if (note && note.midiNote != null) {
+          const targetFreq = midiNoteToFreq(note.midiNote);
+          const cents = Math.round(1200 * Math.log2(freq / targetFreq));
+          centsEl.textContent = cents;
+        } else {
+          centsEl.textContent = '0';
+        }
+      }
+
+      async function loadWasm() {
+        const url = '/wasm/wasm_dsp.wasm';
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('WASM not available. Build wasm_dsp first.');
+        const bytes = await resp.arrayBuffer();
+        const { instance } = await WebAssembly.instantiate(bytes, {});
+        workPtr = instance.exports.get_work_buffer_ptr();
+        return instance;
+      }
+
+      async function start() {
+        try {
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          statusEl.textContent = 'Requesting mic…';
+          ac = new (window.AudioContext || window.webkitAudioContext)();
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+          src = ac.createMediaStreamSource(stream);
+          analyser = ac.createAnalyser();
+          analyser.fftSize = 2048;
+          analyser.smoothingTimeConstant = 0.0;
+
+          engine = new window.PitchDetectionEngine();
+          engine.setSampleRate(ac.sampleRate);
+
+          const useDSP = dspToggle.checked;
+          if (useDSP) {
+            wasmInst = await loadWasm();
+          }
+
+          const bufSize = 1024;
+          proc = ac.createScriptProcessor(bufSize, 1, 1);
+          src.connect(proc);
+          proc.connect(ac.destination);
+          src.connect(analyser);
+
+          const anaBuf = new Float32Array(analyser.fftSize);
+          proc.onaudioprocess = (e) => {
+            const inBuf = e.inputBuffer.getChannelData(0);
+            const outBuf = e.outputBuffer.getChannelData(0);
+
+            if (useDSP && wasmInst) {
+              const mem = new Float32Array(wasmInst.exports.memory.buffer, workPtr, inBuf.length);
+              mem.set(inBuf);
+              const gain = parseFloat(gainEl.value);
+              wasmInst.exports.process_work_buffer(inBuf.length, gain);
+              outBuf.set(mem.subarray(0, inBuf.length));
+            } else {
+              outBuf.set(inBuf);
+            }
+          };
+
+          function loop() {
+            analyser.getFloatTimeDomainData?.(anaBuf);
+            if (!analyser.getFloatTimeDomainData) {
+              const tmp = new Uint8Array(anaBuf.length);
+              analyser.getByteTimeDomainData(tmp);
+              for (let i = 0; i < tmp.length; i++) anaBuf[i] = (tmp[i] - 128) / 128;
+            }
+            drawScope(anaBuf);
+            const result = engine.detectPitch(anaBuf);
+            updateUI(result);
+            rafId = requestAnimationFrame(loop);
+          }
+          statusEl.textContent = 'Listening…';
+          loop();
+        } catch (e) {
+          console.error(e);
+          statusEl.textContent = 'Error: ' + e.message;
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        }
+      }
+
+      function stop() {
+        stopBtn.disabled = true;
+        startBtn.disabled = false;
+        if (rafId) cancelAnimationFrame(rafId);
+        if (proc) try { proc.disconnect(); } catch {}
+        if (src) try { src.disconnect(); } catch {}
+        if (analyser) try { analyser.disconnect(); } catch {}
+        if (ac) try { ac.close(); } catch {}
+        statusEl.textContent = 'Stopped';
+      }
+
+      startBtn.addEventListener('click', start);
+      stopBtn.addEventListener('click', stop);
+    </script>
+  </body>
+  </html>
