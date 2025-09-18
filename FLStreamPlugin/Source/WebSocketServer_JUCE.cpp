@@ -415,10 +415,24 @@ void FLStreamWebSocketServer::runServer(int port)
 
 void FLStreamWebSocketServer::handleNewConnection(std::unique_ptr<StreamingSocket> clientSocket)
 {
-    // Perform WebSocket handshake
+    // Read HTTP request
     String handshakeRequest = readHttpRequest(clientSocket.get());
-    if (!performWebSocketHandshake(clientSocket.get(), handshakeRequest)) {
-        logMessage("WebSocket handshake failed");
+    
+    // Check if this is a WebSocket upgrade request or regular HTTP request
+    if (handshakeRequest.containsIgnoreCase("Upgrade: websocket")) {
+        // Handle WebSocket upgrade
+        if (!performWebSocketHandshake(clientSocket.get(), handshakeRequest)) {
+            logMessage("WebSocket handshake failed");
+            return;
+        }
+    } else if (handshakeRequest.startsWithIgnoreCase("GET / HTTP") || 
+               handshakeRequest.startsWithIgnoreCase("GET /index")) {
+        // Serve web client HTML page
+        serveWebClientPage(clientSocket.get());
+        return;
+    } else {
+        // Unknown request type
+        logMessage("Unknown HTTP request type");
         return;
     }
     
@@ -522,6 +536,132 @@ String FLStreamWebSocketServer::generateWebSocketResponseKey(const String& clien
 {
     // RFC 6455: Sec-WebSocket-Accept = Base64(SHA1(clientKey + GUID))
     return websocketAcceptKey(clientKey);
+}
+
+void FLStreamWebSocketServer::serveWebClientPage(StreamingSocket* socket)
+{
+    String htmlContent = R"(<!DOCTYPE html>
+<html>
+<head>
+    <title>FL Stream Audio Client</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #2c2c2c; color: white; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .connected { background: #27ae60; }
+        .disconnected { background: #e74c3c; }
+        .connecting { background: #f39c12; }
+        button { padding: 10px 20px; margin: 5px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; }
+        .connect-btn { background: #27ae60; color: white; }
+        .disconnect-btn { background: #e74c3c; color: white; }
+        #log { background: #1a1a1a; padding: 10px; height: 300px; overflow-y: scroll; font-family: monospace; }
+        input { padding: 5px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 FL Stream Audio Client</h1>
+        
+        <div id="status" class="status disconnected">Disconnected</div>
+        
+        <div>
+            <input type="text" id="roomId" placeholder="Room ID" value="FL-ROOM-001">
+            <button id="connectBtn" class="connect-btn">Connect</button>
+            <button id="disconnectBtn" class="disconnect-btn" style="display:none;">Disconnect</button>
+        </div>
+        
+        <div id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        const status = document.getElementById('status');
+        const log = document.getElementById('log');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const roomIdInput = document.getElementById('roomId');
+
+        function addLog(message) {
+            const time = new Date().toLocaleTimeString();
+            log.innerHTML += `[${time}] ${message}<br>`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function updateStatus(state, message) {
+            status.className = `status ${state}`;
+            status.textContent = message;
+        }
+
+        function connect() {
+            const wsUrl = `ws://${window.location.host}`;
+            addLog(`Connecting to ${wsUrl}...`);
+            updateStatus('connecting', 'Connecting...');
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                addLog('✅ Connected to FL Stream server');
+                updateStatus('connected', 'Connected');
+                connectBtn.style.display = 'none';
+                disconnectBtn.style.display = 'inline-block';
+                
+                // Join room
+                const roomId = roomIdInput.value || 'FL-ROOM-001';
+                ws.send(JSON.stringify({
+                    type: 'join_room',
+                    roomId: roomId,
+                    userType: 'web_client'
+                }));
+                addLog(`Joining room: ${roomId}`);
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    addLog(`📨 Received: ${data.type || 'message'}`);
+                } catch(e) {
+                    addLog(`📨 Received: ${event.data}`);
+                }
+            };
+            
+            ws.onclose = function() {
+                addLog('❌ Disconnected from server');
+                updateStatus('disconnected', 'Disconnected');
+                connectBtn.style.display = 'inline-block';
+                disconnectBtn.style.display = 'none';
+                ws = null;
+            };
+            
+            ws.onerror = function(error) {
+                addLog(`❌ WebSocket error: ${error}`);
+                updateStatus('disconnected', 'Connection Error');
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+
+        connectBtn.onclick = connect;
+        disconnectBtn.onclick = disconnect;
+        
+        addLog('FL Stream Web Client ready');
+        addLog('Click Connect to join the audio stream');
+    </script>
+</body>
+</html>)";
+
+    String httpResponse = 
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: " + String(htmlContent.getNumBytesAsUTF8()) + "\r\n"
+        "Connection: close\r\n"
+        "\r\n" + htmlContent;
+    
+    socket->write(httpResponse.toRawUTF8(), httpResponse.getNumBytesAsUTF8());
+    logMessage("Served web client page");
 }
 
 void FLStreamWebSocketServer::handleTextMessage(const String& userId, const String& message)

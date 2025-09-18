@@ -205,6 +205,7 @@ private:
     bool performWebSocketHandshake(StreamingSocket* socket, const String& request);
     String extractWebSocketKey(const String& request);
     String generateWebSocketResponseKey(const String& clientKey);
+    void serveWebClientPage(StreamingSocket* socket);
     void handleTextMessage(const String& userId, const String& message);
     void handleBinaryMessage(const String& userId, const MemoryBlock& data);
     void handleJoinRoom(const String& userId, const var& jsonData);
