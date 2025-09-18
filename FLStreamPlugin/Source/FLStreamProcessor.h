@@ -62,7 +62,9 @@ public:
     
     //==============================================================================
     // Audio streaming
-    void setStreamingMode(bool isServer);
+    enum class Mode { Disabled = 0, Server = 1, Client = 2 };
+    void setStreamingMode(Mode mode);
+    void setStreamingMode(bool isServer); // Legacy compatibility
     bool isStreamingServer() const { return streamingMode.load() == Mode::Server; }
     bool isStreamingClient() const { return streamingMode.load() == Mode::Client; }
     
@@ -74,6 +76,11 @@ public:
         return currentRoomId; 
     }
     std::vector<String> getConnectedUsers() const;
+    
+    //==============================================================================
+    // Client connection
+    bool connectToServer(const String& serverAddress, int port, const String& roomId);
+    void disconnectFromServer();
     
     //==============================================================================
     // FL Studio integration
@@ -111,7 +118,6 @@ private:
     
     //==============================================================================
     // Processing state
-    enum class Mode { Disabled = 0, Server = 1, Client = 2 };
     std::atomic<Mode> streamingMode{Mode::Disabled};
     std::atomic<bool> masterTrackMode{false};
     std::atomic<int> latencyCompensationSamples{0};

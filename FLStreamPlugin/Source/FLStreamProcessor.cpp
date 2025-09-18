@@ -349,17 +349,76 @@ int FLStreamProcessor::getConnectedUserCount() const
 }
 
 //==============================================================================
+// Client Connection
+//==============================================================================
+
+bool FLStreamProcessor::connectToServer(const String& serverAddress, int port, const String& roomId)
+{
+    if (webSocketClient->isConnected()) {
+        logMessage("Already connected to server");
+        return true;
+    }
+    
+    // Set room ID first
+    setRoomId(roomId);
+    
+    // Switch to client mode
+    streamingMode.store(Mode::Client);
+    
+    // Stop server if running
+    stopWebSocketServer();
+    
+    // Attempt connection
+    const bool success = webSocketClient->connectToServer(serverAddress, port, roomId);
+    
+    if (success) {
+        logMessage("Connected to server: " + serverAddress + ":" + String(port) + " (Room: " + roomId + ")");
+    } else {
+        logMessage("Failed to connect to server: " + serverAddress + ":" + String(port));
+        streamingMode.store(Mode::Disabled);
+    }
+    
+    return success;
+}
+
+void FLStreamProcessor::disconnectFromServer()
+{
+    if (webSocketClient->isConnected()) {
+        webSocketClient->disconnect();
+        logMessage("Disconnected from server");
+    }
+    
+    if (streamingMode.load() == Mode::Client) {
+        streamingMode.store(Mode::Disabled);
+    }
+}
+
+//==============================================================================
 // Streaming Mode and Configuration
 //==============================================================================
+
+void FLStreamProcessor::setStreamingMode(Mode mode)
+{
+    streamingMode.store(mode);
+    switch (mode) {
+        case Mode::Disabled:
+            logMessage("Streaming disabled");
+            break;
+        case Mode::Server:
+            logMessage("Switched to server mode");
+            break;
+        case Mode::Client:
+            logMessage("Switched to client mode");
+            break;
+    }
+}
 
 void FLStreamProcessor::setStreamingMode(bool isServer)
 {
     if (isServer) {
-        streamingMode.store(Mode::Server);
-        logMessage("Switched to server mode");
+        setStreamingMode(Mode::Server);
     } else {
-        streamingMode.store(Mode::Client);
-        logMessage("Switched to client mode");
+        setStreamingMode(Mode::Client);
     }
 }
 

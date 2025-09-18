@@ -73,6 +73,12 @@ private:
     TextEditor roomIdEditor;
     Label roomIdLabel;
     
+    // Client connection fields
+    Label serverAddressLabel;
+    TextEditor serverAddressEditor;
+    Label serverPortLabel;
+    Slider serverPortSlider;
+    
     // Audio controls section
     GroupComponent audioGroup;
     

@@ -116,6 +116,25 @@ void FLStreamEditor::setupComponents()
     roomIdEditor.setFont(Font(Font::getDefaultMonospacedFontName(), 14.0f, Font::plain));
     addAndMakeVisible(roomIdEditor);
     
+    // Client connection fields
+    serverAddressLabel.setText("Server Address:", dontSendNotification);
+    serverAddressLabel.setColour(Label::textColourId, FL_TEXT);
+    addAndMakeVisible(serverAddressLabel);
+    
+    serverAddressEditor.setText("localhost");
+    serverAddressEditor.setFont(Font(Font::getDefaultMonospacedFontName(), 14.0f, Font::plain));
+    addAndMakeVisible(serverAddressEditor);
+    
+    serverPortLabel.setText("Server Port:", dontSendNotification);
+    serverPortLabel.setColour(Label::textColourId, FL_TEXT);
+    addAndMakeVisible(serverPortLabel);
+    
+    serverPortSlider.setSliderStyle(Slider::IncDecButtons);
+    serverPortSlider.setRange(8000, 65535, 1);
+    serverPortSlider.setValue(9002);
+    serverPortSlider.setTextBoxStyle(Slider::TextBoxLeft, false, 60, 20);
+    addAndMakeVisible(serverPortSlider);
+    
     // Audio controls group
     audioGroup.setText("Audio Controls");
     audioGroup.setColour(GroupComponent::textColourId, FL_TEXT);
@@ -347,6 +366,13 @@ void FLStreamEditor::resized()
     roomIdEditor.setBounds(MARGIN + 260, y, 120, COMPONENT_HEIGHT);
     y += 35;
     
+    // Client connection fields (only visible in client mode)
+    serverAddressLabel.setBounds(MARGIN + 10, y, 100, COMPONENT_HEIGHT);
+    serverAddressEditor.setBounds(MARGIN + 120, y, 120, COMPONENT_HEIGHT);
+    serverPortLabel.setBounds(MARGIN + 250, y, 80, COMPONENT_HEIGHT);
+    serverPortSlider.setBounds(MARGIN + 340, y, 100, COMPONENT_HEIGHT);
+    y += 35;
+    
     openWebClientButton.setBounds(MARGIN + 10, y, 150, COMPONENT_HEIGHT);
     y += 50;
     
@@ -467,8 +493,35 @@ void FLStreamEditor::buttonClicked(Button* button)
         }
     }
     else if (button == &connectButton) {
-        // Client connection logic would go here
-        addLogMessage("Client connection not implemented yet");
+        // Implement client connection logic
+        const String serverAddress = serverAddressEditor.getText();
+        const int serverPort = static_cast<int>(serverPortSlider.getValue());
+        const String roomId = roomIdEditor.getText();
+        
+        if (serverAddress.isEmpty()) {
+            addLogMessage("Error: Server address cannot be empty");
+            return;
+        }
+        
+        if (roomId.isEmpty()) {
+            addLogMessage("Error: Room ID cannot be empty");
+            return;
+        }
+        
+        // Switch to client mode
+        audioProcessor.setStreamingMode(FLStreamProcessor::Mode::Client);
+        audioProcessor.setRoomId(roomId);
+        
+        // Attempt connection
+        addLogMessage("Connecting to " + serverAddress + ":" + String(serverPort) + " (Room: " + roomId + ")");
+        
+        if (audioProcessor.connectToServer(serverAddress, serverPort, roomId)) {
+            addLogMessage("Successfully connected to server");
+            connectButton.setButtonText("Disconnect");
+            connectButton.setColour(TextButton::buttonColourId, FL_DANGER);
+        } else {
+            addLogMessage("Failed to connect to server");
+        }
     }
     else if (button == &clearLogButton) {
         logTextEditor.clear();
@@ -516,6 +569,13 @@ void FLStreamEditor::updateStreamingMode()
     serverStartButton.setEnabled(modeIndex == 2); // Server mode
     connectButton.setEnabled(modeIndex == 3);     // Client mode
     openWebClientButton.setEnabled(audioProcessor.isServerRunning());
+    
+    // Show/hide client connection fields
+    const bool isClientMode = (modeIndex == 3);
+    serverAddressLabel.setVisible(isClientMode);
+    serverAddressEditor.setVisible(isClientMode);
+    serverPortLabel.setVisible(isClientMode);
+    serverPortSlider.setVisible(isClientMode);
 }
 
 void FLStreamEditor::updateAudioLevels()
