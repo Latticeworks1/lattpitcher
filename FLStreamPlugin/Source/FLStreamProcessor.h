@@ -182,6 +182,7 @@ private:
     static constexpr const char* PARAM_MIX_AMOUNT = "mixAmount";
     static constexpr const char* PARAM_LATENCY_COMP = "latencyComp";
     static constexpr const char* PARAM_WEBSOCKET_PORT = "wsPort";
+    static constexpr const char* PARAM_ROOM_NAME = "roomName";
     
     // Parameter atomic values
     std::atomic<float>* streamingModeParam = nullptr;
