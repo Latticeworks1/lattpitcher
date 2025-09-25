@@ -1,225 +1,161 @@
 #pragma once
 
-#include "FLStreamProcessor.h"
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
+#include "FLStreamProcessor.h"
 
 using namespace juce;
 
 //==============================================================================
-/** Professional FL Studio Streamer GUI Component */
-class FLStreamEditor : public AudioProcessorEditor,
-                      private Timer,
-                      private Button::Listener,
-                      private Slider::Listener,
-                      private ComboBox::Listener
+/** Single Page WebView for FL Stream Plugin Room Management */
+struct FLStreamWebView : WebBrowserComponent
+{
+    using WebBrowserComponent::WebBrowserComponent;
+
+    // Prevent navigation away from our room management interface
+    bool pageAboutToLoad(const String& newURL) override;
+};
+
+//==============================================================================
+/** FL Stream Plugin WebView Editor - Colyseus Room Management */
+class FLStreamEditor : public AudioProcessorEditor, private Timer
 {
 public:
-    FLStreamEditor(FLStreamProcessor& processor);
-    ~FLStreamEditor() override;
+    explicit FLStreamEditor(FLStreamProcessor& processor);
 
     //==============================================================================
     void paint(Graphics&) override;
     void resized() override;
-    
-    //==============================================================================
-    // Component listeners
-    void buttonClicked(Button* button) override;
-    void sliderValueChanged(Slider* slider) override;
-    void comboBoxChanged(ComboBox* comboBoxThatHasChanged) override;
-    
-    //==============================================================================
-    // Timer callback for real-time updates
+
+    int getControlParameterIndex(Component&) override
+    {
+        return controlParameterIndexReceiver.getControlParameterIndex();
+    }
+
     void timerCallback() override;
 
+    std::optional<WebBrowserComponent::Resource> getResource(const String& url);
+
 private:
-    //==============================================================================
-    // Reference to processor
-    FLStreamProcessor& audioProcessor;
+    FLStreamProcessor& processorRef;
+
+    // Minimal WebView relays
+    WebSliderRelay roomVolumeRelay{"roomVolumeSlider"};
+    WebToggleButtonRelay muteToggleRelay{"muteToggle"};
+    WebToggleButtonRelay talkButtonRelay{"talkButton"};
     
-    //==============================================================================
-    // Visual constants (FL Studio theme)
-    static constexpr int EDITOR_WIDTH = 600;
-    static constexpr int EDITOR_HEIGHT = 750;
-    static constexpr int MARGIN = 10;
-    static constexpr int COMPONENT_HEIGHT = 25;
-    static constexpr int SECTION_SPACING = 15;
-    
-    // FL Studio color scheme
-    const Colour FL_BACKGROUND = Colour(0xff393f47);
-    const Colour FL_PANEL = Colour(0xff4a5058);
-    const Colour FL_ACCENT = Colour(0xff5fb3d4);
-    const Colour FL_SUCCESS = Colour(0xff7cb518);
-    const Colour FL_WARNING = Colour(0xfff5a623);
-    const Colour FL_DANGER = Colour(0xffe74c3c);
-    const Colour FL_TEXT = Colour(0xffffffff);
-    const Colour FL_TEXT_SECONDARY = Colour(0xffb8bcc2);
-    
-    //==============================================================================
-    // Main control sections
-    
-    // Header section
-    Label titleLabel;
-    Label statusLabel;
-    
-    // Connection section
-    GroupComponent connectionGroup;
-    ComboBox streamingModeCombo;
-    Label streamingModeLabel;
-    TextButton serverStartButton;
-    TextButton connectButton;
-    Label portLabel;
-    Slider portSlider;
-    TextEditor roomIdEditor;
-    Label roomIdLabel;
-    
-    // Client connection fields
-    Label serverAddressLabel;
-    TextEditor serverAddressEditor;
-    Label serverPortLabel;
-    Slider serverPortSlider;
-    
-    // Audio controls section
-    GroupComponent audioGroup;
-    
-    Slider inputGainSlider;
-    Label inputGainLabel;
-    Label inputGainValueLabel;
-    
-    Slider outputGainSlider;
-    Label outputGainLabel;
-    Label outputGainValueLabel;
-    
-    Slider mixAmountSlider;
-    Label mixAmountLabel;
-    Label mixAmountValueLabel;
-    
-    // Advanced settings section
-    GroupComponent advancedGroup;
-    
-    ToggleButton masterTrackToggle;
-    
-    Slider latencyCompSlider;
-    Label latencyCompLabel;
-    Label latencyCompValueLabel;
-    
-    // Status and monitoring section
-    GroupComponent statusGroup;
-    
-    Label connectedUsersLabel;
-    Label connectedUsersValue;
-    
-    Label bandwidthLabel;
-    Label bandwidthValue;
-    
-    Label latencyLabel;
-    Label latencyValue;
-    
-    Label cpuUsageLabel;
-    Label cpuUsageValue;
-    
-    // Audio level meters
-    Component inputMeterComponent;
-    Component outputMeterComponent;
-    Label inputMeterLabel;
-    Label outputMeterLabel;
-    
-    // Log section
-    GroupComponent logGroup;
-    TextEditor logTextEditor;
-    TextButton clearLogButton;
-    TextButton openWebClientButton;
-    
-    //==============================================================================
-    // Parameter attachments for automation
-    std::unique_ptr<AudioProcessorValueTreeState::ComboBoxAttachment> streamingModeAttachment;
-    std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
-    std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
-    std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> mixAmountAttachment;
-    std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> latencyCompAttachment;
-    std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> portAttachment;
-    std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> masterTrackAttachment;
-    
-    //==============================================================================
-    // Audio level visualization
-    struct AudioLevelMeter {
-        float rmsLevel = 0.0f;
-        float peakLevel = 0.0f;
-        float peakHold = 0.0f;
-        int64_t peakHoldTime = 0;
-        
-        void update(float rms, float peak) {
-            rmsLevel = rms;
-            peakLevel = peak;
-            
-            if (peak > peakHold) {
-                peakHold = peak;
-                peakHoldTime = Time::getCurrentTime().toMilliseconds();
-            } else if (Time::getCurrentTime().toMilliseconds() - peakHoldTime > 1000) {
-                peakHold *= 0.95f;
-            }
-        }
-        
-        void paint(Graphics& g, Rectangle<int> bounds) {
-            // Background
-            g.setColour(Colour(0xff2c2c2c));
-            g.fillRect(bounds);
-            
-            // RMS level
-            const float rmsWidth = rmsLevel * bounds.getWidth();
-            g.setColour(Colour(0xff27ae60));
-            g.fillRect(bounds.getX(), bounds.getY(), static_cast<int>(rmsWidth), bounds.getHeight());
-            
-            // Peak hold
-            if (peakHold > 0.01f) {
-                const int peakX = static_cast<int>(peakHold * bounds.getWidth());
-                g.setColour(Colour(0xfff39c12));
-                g.fillRect(bounds.getX() + peakX - 1, bounds.getY(), 2, bounds.getHeight());
-            }
-            
-            // Clip indicator
-            if (peakLevel > 0.95f) {
-                g.setColour(Colour(0xffe74c3c));
-                g.fillRect(bounds.getRight() - 10, bounds.getY(), 10, bounds.getHeight());
-            }
-            
-            // Scale markings
-            g.setColour(Colour(0xff7f8c8d));
-            for (int db = -60; db <= 0; db += 10) {
-                const float position = jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f);
-                const int x = bounds.getX() + static_cast<int>(position * bounds.getWidth());
-                g.drawVerticalLine(x, bounds.getY(), bounds.getBottom());
-            }
-            
-            // Border
-            g.setColour(Colour(0xff5a5a5a));
-            g.drawRect(bounds, 1);
-        }
+    WebControlParameterIndexReceiver controlParameterIndexReceiver;
+
+    // Main WebView component with room management interface
+    FLStreamWebView webComponent{
+        WebBrowserComponent::Options{}
+            .withBackend(WebBrowserComponent::Options::Backend::webview2)
+            .withWinWebView2Options(WebBrowserComponent::Options::WinWebView2{}
+                .withUserDataFolder(File::getSpecialLocation(File::SpecialLocationType::tempDirectory)))
+            .withNativeIntegrationEnabled()
+            .withOptionsFrom(roomVolumeRelay)
+            .withOptionsFrom(muteToggleRelay)
+            .withOptionsFrom(talkButtonRelay)
+            .withOptionsFrom(controlParameterIndexReceiver)
+            .withNativeFunction("joinRoom", [this](auto& var, auto complete)
+            {
+                String roomName = var[0].toString();
+                String serverAddress = var[1].toString();
+                
+                bool success = processorRef.joinRoom(roomName, serverAddress);
+                if (success)
+                {
+                    complete("Successfully joined room: " + roomName);
+                }
+                else
+                {
+                    complete("Failed to join room: " + roomName);
+                }
+            })
+            .withNativeFunction("leaveRoom", [this](auto&, auto complete)
+            {
+                processorRef.leaveRoom();
+                complete("Left room");
+            })
+            .withNativeFunction("getStatus", [this](auto&, auto complete)
+            {
+                DynamicObject::Ptr status(new DynamicObject());
+                status->setProperty("roomName", processorRef.getCurrentRoomName());
+                status->setProperty("serverAddress", processorRef.getServerAddress());
+                status->setProperty("isConnected", processorRef.isRoomConnected());
+                status->setProperty("roomEnabled", processorRef.isRoomConnected());
+                status->setProperty("connectedUsers", processorRef.connectedUsers.load());
+                status->setProperty("audioLevel", processorRef.audioLevel.load());
+                
+                // Enhanced status information
+                status->setProperty("connectionStatus", processorRef.getConnectionStatusText());
+                status->setProperty("lastError", processorRef.getLastErrorMessage());
+                status->setProperty("lastLog", processorRef.getLastLogMessage());
+                status->setProperty("isConnecting", processorRef.isConnecting());
+                
+                complete(var(status));
+            })
+            .withResourceProvider([this](const auto& url)
+            {
+                return getResource(url);
+            }, URL{"http://localhost:3000/"}.getOrigin())
     };
-    
-    AudioLevelMeter inputMeter;
-    AudioLevelMeter outputMeter;
-    
-    //==============================================================================
-    // Status tracking
-    bool isConnected = false;
-    bool isServerMode = false;
-    FLStreamProcessor::StreamingStats lastStats;
-    
-    //==============================================================================
-    // Helper methods
-    void setupComponents();
-    void setupParameterAttachments();
-    void updateConnectionStatus();
-    void updateStreamingMode();
-    void updateAudioLevels();
-    void updateStatistics();
-    void addLogMessage(const String& message);
-    void openWebClient();
-    
-    String formatBandwidth(double mbps);
-    String formatLatency(double ms);
-    String formatPercentage(double value);
-    
+
+    // Parameter attachments for VST automation
+    WebSliderParameterAttachment roomVolumeAttachment;
+    WebToggleButtonParameterAttachment muteAttachment;
+    WebToggleButtonParameterAttachment talkButtonAttachment;
+
+    // Real-time status data for web interface
+    std::deque<Array<var>> statusFrames;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLStreamEditor)
 };
+
+//==============================================================================
+/** Resource provider for embedded web interface */
+static ZipFile* getFLStreamWebAssets()
+{
+    // No embedded assets - will use fallback HTML
+    return nullptr;
+}
+
+static const char* getMimeForExtension(const String& extension)
+{
+    static const std::unordered_map<String, const char*> mimeMap = {
+        {{"htm"},   "text/html"},
+        {{"html"},  "text/html"},
+        {{"txt"},   "text/plain"},
+        {{"jpg"},   "image/jpeg"},
+        {{"jpeg"},  "image/jpeg"},
+        {{"svg"},   "image/svg+xml"},
+        {{"ico"},   "image/vnd.microsoft.icon"},
+        {{"json"},  "application/json"},
+        {{"png"},   "image/png"},
+        {{"css"},   "text/css"},
+        {{"map"},   "application/json"},
+        {{"js"},    "text/javascript"},
+        {{"woff2"}, "font/woff2"}
+    };
+
+    if (const auto it = mimeMap.find(extension.toLowerCase()); it != mimeMap.end())
+        return it->second;
+
+    return "text/plain";
+}
+
+static String getExtension(String filename)
+{
+    return filename.fromLastOccurrenceOf(".", false, false);
+}
+
+static auto streamToVector(InputStream& stream)
+{
+    std::vector<std::byte> result((size_t)stream.getTotalLength());
+    stream.setPosition(0);
+    [[maybe_unused]] const auto bytesRead = stream.read(result.data(), result.size());
+    jassert(bytesRead == (ssize_t)result.size());
+    return result;
+}
+
+extern const String localColouseusServerAddress;
