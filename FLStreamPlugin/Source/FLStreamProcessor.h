@@ -14,7 +14,7 @@ static constexpr const char* PARAM_ROOM_VOLUME = "roomVolume";
 static constexpr const char* PARAM_MUTE = "mute";
 
 //==============================================================================
-/** FL Stream Processor - Colyseus Room Management */
+/** Audio processor with real-time Colyseus WebSocket voice transmission and push-to-talk protocol */
 class FLStreamProcessor : public AudioProcessor
 {
 public:
@@ -56,7 +56,7 @@ public:
     String getCurrentRoomName() const { return currentRoomName; }
     String getServerAddress() const { return serverAddress; }
     
-    // Enhanced status methods for detailed GUI feedback
+    // Connection state accessors for UI status updates
     String getConnectionStatusText() const;
     String getLastErrorMessage() const;
     String getLastLogMessage() const;
@@ -69,7 +69,7 @@ public:
     std::atomic<double> audioLevel{0.0};
     SpinLock statusLock;
     
-    // Enhanced connection status tracking
+    // Connection state management for Colyseus WebSocket
     enum class ConnectionState {
         Disconnected,
         Connecting,
@@ -101,6 +101,7 @@ private:
     // Private methods
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void processRoomCollaboration(AudioBuffer<float>& buffer);
+    void processRoomCollaboration(AudioBuffer<float>& outputBuffer, AudioBuffer<float>* externalInput);
     void updateAudioLevel(const AudioBuffer<float>& buffer);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLStreamProcessor)

@@ -1,0 +1,36 @@
+# Build artifacts
+build/
+*.o
+*.obj
+*.a
+*.lib
+*.dylib
+*.so
+*.dll
+
+# IDE files
+.vscode/
+.idea/
+*.xcworkspace
+*.xcodeproj
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# JUCE generated files (keep source)
+JuceLibraryCode/
+
+# Don't ignore the built plugins in artefacts
+!FLStreamPlugin_artefacts/

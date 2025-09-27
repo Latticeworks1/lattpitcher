@@ -1,0 +1,50 @@
+{
+  "Name": "FL Stream Plugin",
+  "Version": "1.0.0",
+  "Factory Info": {
+    "Vendor": "YourCompany",
+    "URL": "",
+    "E-Mail": "",
+    "Flags": {
+      "Unicode": true,
+      "Classes Discardable": false,
+      "Component Non Discardable": false,
+    },
+  },
+  "Classes": [
+    {
+      "CID": "ABCDEF019182FAEB4D616E75464C5374",
+      "Category": "Audio Module Class",
+      "Name": "FL Stream Plugin",
+      "Vendor": "YourCompany",
+      "Version": "1.0.0",
+      "SDKVersion": "VST 3.7.12",
+      "Sub Categories": [
+        "Fx",
+        "Effect",
+        "Network",
+      ],
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+    {
+      "CID": "ABCDEF011234ABCD4D616E75464C5374",
+      "Category": "Component Controller Class",
+      "Name": "FL Stream Plugin",
+      "Vendor": "YourCompany",
+      "Version": "1.0.0",
+      "SDKVersion": "VST 3.7.12",
+      "Sub Categories": [
+        "Fx",
+        "Effect",
+        "Network",
+      ],
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+  ],
+}

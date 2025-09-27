@@ -1,0 +1,151 @@
+#pragma once
+
+#include <juce_core/juce_core.h>
+#include <juce_events/juce_events.h>
+#include <websocketpp/config/asio_client.hpp>
+#include <websocketpp/client.hpp>
+#include <opus/opus.h>
+#include "mkvmuxer/mkvmuxer.h"
+#include "mkvparser/mkvparser.h"
+#include <memory>
+#include <functional>
+#include <queue>
+#include <atomic>
+
+using namespace juce;
+
+//==============================================================================
+// Forward declarations for WebSocket++ client types with SSL support
+typedef websocketpp::client<websocketpp::config::asio_tls_client> WSClient;
+typedef websocketpp::lib::shared_ptr<websocketpp::lib::asio::ssl::context> ContextPtr;
+
+//==============================================================================
+/** Professional Colyseus Room Client with WebSocket++ and WebM/Opus encoding */
+class ColyseusRoomClient : public Thread
+{
+public:
+    ColyseusRoomClient();
+    ~ColyseusRoomClient() override;
+
+    //==============================================================================
+    // Room management
+    bool joinRoom(const String& roomName, const String& serverUrl = "https://voice.latticeworks-ai.com");
+    void leaveRoom();
+    bool isConnected() const { return connected.load(); }
+    String getCurrentRoom() const;
+    String getCurrentPlayerId() const;
+
+    //==============================================================================
+    // Audio streaming
+    void sendAudioData(const float* audioData, int numSamples, int numChannels);
+    void setAudioReceiveCallback(std::function<void(const float*, int, int)> callback);
+
+    //==============================================================================
+    // User management
+    int getConnectedUserCount() const { return connectedUsers.load(); }
+    StringArray getConnectedUserList() const;
+
+    //==============================================================================
+    // Callbacks
+    std::function<void(const String&)> onRoomJoined;
+    std::function<void(const String&)> onRoomLeft;
+    std::function<void(const String&, const String&)> onUserJoined;
+    std::function<void(const String&)> onUserLeft;
+    std::function<void(const String&)> onError;
+    std::function<void(const String&)> onLogMessage;
+
+private:
+    //==============================================================================
+    // Thread implementation
+    void run() override;
+    
+    //==============================================================================
+    // WebSocket connection
+    void connectToServer();
+    void disconnectFromServer();
+    void sendMessage(const var& message);
+    void handleMessage(const String& message);
+    
+    //==============================================================================
+    // Message handlers
+    void handleRoomJoined(const var& data);
+    void handleRoomLeft(const var& data);
+    void handleUserJoined(const var& data);
+    void handleUserLeft(const var& data);
+    void handleAudioData(const var& data);
+    void handleError(const var& data);
+
+    //==============================================================================
+    // State management
+    std::atomic<bool> connected{false};
+    std::atomic<bool> shouldStop{false};
+    std::atomic<bool> shouldReconnect{false};
+    std::atomic<int> connectedUsers{0};
+    
+    String currentRoomName;
+    String currentPlayerId;
+    String serverUrl;
+    mutable CriticalSection roomStateLock;
+    
+    StringArray userList;
+    mutable CriticalSection userListLock;
+
+    //==============================================================================
+    // Audio processing methods
+    void processAudioQueue();
+    void sendBinaryMessage(const std::vector<uint8_t>& data);
+    void sendColyseusAudioMessage(const String& messageType, const std::vector<uint8_t>& audioData);
+    void handleWebSocketMessage(void* msg);
+    void handleIncomingAudio(const std::vector<uint8_t>& webmData);
+    void handleRoomState(const std::vector<uint8_t>& stateData);
+    
+    //==============================================================================
+    // Audio processing
+    std::function<void(const float*, int, int)> audioReceiveCallback;
+    mutable CriticalSection audioCallbackLock;
+
+    //==============================================================================
+    // WebSocket++ client instances
+    std::unique_ptr<WSClient> wsClient;
+    WSClient::connection_ptr connection;
+    
+    //==============================================================================
+    // Opus encoder/decoder for real-time audio compression
+    OpusEncoder* opusEncoder = nullptr;
+    OpusDecoder* opusDecoder = nullptr;
+    
+    //==============================================================================
+    // WebM container for audio streaming
+    mkvmuxer::IMkvWriter* webmWriter = nullptr;
+    void* memoryWriterConcrete = nullptr; // Store concrete MemoryWriter for proper deletion
+    std::unique_ptr<mkvmuxer::Segment> webmSegment;
+    uint64_t audioTrackNumber = 0;
+    
+    //==============================================================================
+    // Thread-safe audio queue
+    struct AudioPacket {
+        std::vector<float> samples;
+        int numChannels;
+        uint64_t timestamp;
+    };
+    
+    std::queue<AudioPacket> audioQueue;
+    CriticalSection audioQueueLock;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ColyseusRoomClient)
+};
+
+//==============================================================================
+/** Colyseus message protocol helpers */
+namespace ColyseusProtocol
+{
+    var createJoinRoomMessage(const String& roomName);
+    var createLeaveRoomMessage();
+    var createAudioMessage(const float* audioData, int numSamples, int numChannels);
+    
+    bool isRoomJoinedMessage(const var& message);
+    bool isUserJoinedMessage(const var& message);
+    bool isUserLeftMessage(const var& message);
+    bool isAudioDataMessage(const var& message);
+    bool isErrorMessage(const var& message);
+}

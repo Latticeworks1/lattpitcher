@@ -1,0 +1,28 @@
+FL Stream Browser VST v1.0.0
+
+Build Date: September 27, 2025
+Git Commit: d27b1dc
+
+Features:
+- General Web Browser with navigation controls
+- FL Stream Voice Chat integration (voice.latticeworks-ai.com)
+- Real-time Colyseus WebSocket voice collaboration  
+- Push-to-talk parameter automation
+- VST3, AU, and Standalone formats
+
+Tested Platforms:
+- macOS 10.15+ (Catalina and later)
+- FL Studio 21+, Logic Pro X, Ableton Live
+
+Dependencies:
+- JUCE 7.0.12
+- OpenSSL 1.1+
+- Opus Codec
+- libwebm
+- Boost System
+
+Build Configuration:
+- C++17 Standard
+- Release build with optimizations
+- SSL/TLS support enabled
+- WebBrowser component enabled

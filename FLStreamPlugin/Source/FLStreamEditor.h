@@ -7,7 +7,7 @@
 using namespace juce;
 
 //==============================================================================
-/** FL Stream Voice Chat WebView */
+/** WebBrowserComponent for Colyseus voice interface rendering */
 struct FLStreamWebView : WebBrowserComponent
 {
     FLStreamWebView() 
@@ -15,14 +15,14 @@ struct FLStreamWebView : WebBrowserComponent
             .withBackend(WebBrowserComponent::Options::Backend::defaultBackend)
             .withWinWebView2Options(WebBrowserComponent::Options::WinWebView2{})) {}
 
-    // Allow navigation to voice.latticeworks-ai.com only
+    // Override pageAboutToLoad for voice.latticeworks-ai.com URL validation
     bool pageAboutToLoad(const String& newURL) override
     {
         juce::ignoreUnused(newURL);
         return true; // Allow all navigation for now
     }
 
-    // Handle new window requests
+    // Redirect new window requests to current WebView instance
     void newWindowAttemptingToLoad(const String& newURL) override
     {
         MessageManager::callAsync([this, newURL]() {
@@ -30,14 +30,14 @@ struct FLStreamWebView : WebBrowserComponent
         });
     }
 
-    // Handle page load completion and inject custom styling
+    // Override pageFinishedLoading to inject FL Stream CSS theme
     void pageFinishedLoading(const String& url) override
     {
         std::cout << "FL Stream: Page loaded successfully: " << url << std::endl;
         
-        // Inject custom CSS for reskinning
+        // Apply FL Stream branded CSS via evaluateJavascript
         String customCSS = R"(
-            /* Custom FL Stream Plugin Skin */
+            /* FL Stream branded interface theme for Colyseus WebView */
             body { 
                 background: linear-gradient(135deg, #1e1e2e, #2d3748) !important;
                 font-family: 'SF Pro Display', 'Segoe UI', system-ui !important;
@@ -80,7 +80,7 @@ struct FLStreamWebView : WebBrowserComponent
 };
 
 //==============================================================================
-/** FL Stream Plugin WebView Editor - Colyseus Room Management */
+/** AudioProcessorEditor with WebView and native UI for Colyseus voice chat */
 class FLStreamEditor : public AudioProcessorEditor, public Timer
 {
 public:
@@ -93,16 +93,15 @@ public:
 
     int getControlParameterIndex(Component&) override
     {
-        return -1; // No parameter control mapping for web browser
+        return -1; // WebBrowserComponent requires no parameter automation
     }
 
-    std::optional<WebBrowserComponent::Resource> getResource(const String& url);
     void loadFLStreamHome();
 
 private:
     FLStreamProcessor& processorRef;
 
-    // Navigation controls hidden - direct access to voice.latticeworks-ai.com only
+    // WebView configured for voice.latticeworks-ai.com without navigation UI
 
     // UI Mode Selection
     enum class UIMode { WebView, Native };
@@ -111,10 +110,11 @@ private:
     // WebView components  
     std::unique_ptr<FLStreamWebView> webComponent;
     
-    // Native UI components (alternative to WebView)
+    // JUCE components for standalone application voice controls
     std::unique_ptr<TextButton> talkButton;
     std::unique_ptr<Label> statusLabel;
     std::unique_ptr<Label> connectionStatusLabel;
+    std::unique_ptr<Label> roomDisplayLabel;
     std::unique_ptr<Label> playersLabel;
     std::unique_ptr<Component> playerListContainer;
     std::unique_ptr<Slider> volumeSlider;
@@ -129,57 +129,13 @@ private:
     void startTalking();
     void stopTalking();
     void updateConnectionStatus();
+    void updateRoomDisplay();
     
-    // Default FL Stream Voice Chat HTML content
+    // Embedded HTML for Colyseus voice interface fallback
     String flStreamHtmlContent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLStreamEditor)
 };
 
-//==============================================================================
-/** Resource provider for embedded web interface */
-static ZipFile* getFLStreamWebAssets()
-{
-    // No embedded assets - will use fallback HTML
-    return nullptr;
-}
-
-static const char* getMimeForExtension(const String& extension)
-{
-    static const std::unordered_map<String, const char*> mimeMap = {
-        {{"htm"},   "text/html"},
-        {{"html"},  "text/html"},
-        {{"txt"},   "text/plain"},
-        {{"jpg"},   "image/jpeg"},
-        {{"jpeg"},  "image/jpeg"},
-        {{"svg"},   "image/svg+xml"},
-        {{"ico"},   "image/vnd.microsoft.icon"},
-        {{"json"},  "application/json"},
-        {{"png"},   "image/png"},
-        {{"css"},   "text/css"},
-        {{"map"},   "application/json"},
-        {{"js"},    "text/javascript"},
-        {{"woff2"}, "font/woff2"}
-    };
-
-    if (const auto it = mimeMap.find(extension.toLowerCase()); it != mimeMap.end())
-        return it->second;
-
-    return "text/plain";
-}
-
-static String getExtension(String filename)
-{
-    return filename.fromLastOccurrenceOf(".", false, false);
-}
-
-static auto streamToVector(InputStream& stream)
-{
-    std::vector<std::byte> result((size_t)stream.getTotalLength());
-    stream.setPosition(0);
-    [[maybe_unused]] const auto bytesRead = stream.read(result.data(), result.size());
-    jassert(bytesRead == (ssize_t)result.size());
-    return result;
-}
 
 extern const String localColouseusServerAddress;

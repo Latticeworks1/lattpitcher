@@ -1,0 +1,43 @@
+# Build directories
+build/
+JUCE_build/
+*/build/
+
+# Binary files
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+
+# IDE files
+.vscode/
+.idea/
+*.xcworkspace
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# Plugin artifacts (keep in build directory only)
+*.vst3
+*.component
+*.app

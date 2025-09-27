@@ -1,0 +1,606 @@
+#include "ColyseusRoomClient.h"
+#include <websocketpp/config/asio_client.hpp>
+#include <websocketpp/client.hpp>
+#include <boost/asio/ssl.hpp>
+#include <thread>
+
+using namespace juce;
+using namespace websocketpp;
+
+// Colyseus Protocol Constants (from Protocol.ts)
+enum class ColyseusProtocolCode : uint8_t {
+    JOIN_ROOM = 10,
+    ERROR = 11,
+    LEAVE_ROOM = 12,
+    ROOM_DATA = 13,
+    ROOM_STATE = 14,
+    ROOM_STATE_PATCH = 15,
+    ROOM_DATA_BYTES = 17
+};
+
+//==============================================================================
+/** WebM Memory Writer for in-memory WebM generation */
+class MemoryWriter : public mkvmuxer::IMkvWriter {
+public:
+    MemoryWriter() = default;
+    
+    int32_t Write(const void* buf, uint32_t len) override {
+        const uint8_t* data = static_cast<const uint8_t*>(buf);
+        buffer.insert(buffer.end(), data, data + len);
+        return 0;
+    }
+    
+    int64_t Position() const override {
+        return static_cast<int64_t>(buffer.size());
+    }
+    
+    int32_t Position(int64_t position) override {
+        if (position < 0 || position > static_cast<int64_t>(buffer.size()))
+            return -1;
+        position_ = position;
+        return 0;
+    }
+    
+    bool Seekable() const override { return true; }
+    
+    void ElementStartNotify(uint64_t element_id, int64_t position) override {}
+    
+    std::vector<uint8_t> getBuffer() const { return buffer; }
+    void clearBuffer() { buffer.clear(); position_ = 0; }
+    
+private:
+    std::vector<uint8_t> buffer;
+    int64_t position_ = 0;
+};
+
+//==============================================================================
+ColyseusRoomClient::ColyseusRoomClient()
+    : Thread("ColyseusRoomClient")
+{
+    // Initialize WebSocket++ client
+    wsClient = std::make_unique<WSClient>();
+    
+    // Configure WebSocket client
+    wsClient->clear_access_channels(websocketpp::log::alevel::all);
+    wsClient->clear_error_channels(websocketpp::log::elevel::all);
+    wsClient->set_access_channels(websocketpp::log::alevel::connect | websocketpp::log::alevel::disconnect);
+    
+    wsClient->init_asio();
+    wsClient->start_perpetual();
+    
+    std::cout << "FL Stream: ColyseusRoomClient initialized with WebSocket support" << std::endl;
+}
+
+ColyseusRoomClient::~ColyseusRoomClient()
+{
+    shouldStop = true;
+    leaveRoom();
+    if (isThreadRunning()) stopThread(5000);
+    
+    // Clean up Opus encoder/decoder
+    if (opusEncoder) {
+        opus_encoder_destroy(opusEncoder);
+        opusEncoder = nullptr;
+    }
+    if (opusDecoder) {
+        opus_decoder_destroy(opusDecoder);
+        opusDecoder = nullptr;
+    }
+    
+    // Clean up WebM writer using concrete type
+    if (memoryWriterConcrete) {
+        delete static_cast<MemoryWriter*>(memoryWriterConcrete);
+        memoryWriterConcrete = nullptr;
+        webmWriter = nullptr;
+    }
+}
+
+bool ColyseusRoomClient::joinRoom(const String& roomName, const String& serverUrl)
+{
+    const ScopedLock lock(roomStateLock);
+    
+    if (connected.load()) leaveRoom();
+
+    currentRoomName = roomName;
+    this->serverUrl = serverUrl;
+
+    // Initialize Opus encoder for 48kHz, mono, VoIP application
+    int opusError;
+    opusEncoder = opus_encoder_create(48000, 1, OPUS_APPLICATION_VOIP, &opusError);
+    if (opusError != OPUS_OK) {
+        if (onError) onError("Failed to initialize Opus encoder: " + String(opus_strerror(opusError)));
+        return false;
+    }
+    
+    // Initialize Opus decoder for incoming audio
+    opusDecoder = opus_decoder_create(48000, 1, &opusError);
+    if (opusError != OPUS_OK) {
+        if (onError) onError("Failed to initialize Opus decoder: " + String(opus_strerror(opusError)));
+        return false;
+    }
+    
+    // Configure Opus encoder for low latency
+    opus_encoder_ctl(opusEncoder, OPUS_SET_BITRATE(64000)); // 64 kbps for voice
+    opus_encoder_ctl(opusEncoder, OPUS_SET_COMPLEXITY(1));  // Low complexity for real-time
+    opus_encoder_ctl(opusEncoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    
+    // Initialize WebM container
+    MemoryWriter* memoryWriter = new MemoryWriter();
+    webmWriter = memoryWriter;
+    memoryWriterConcrete = memoryWriter;
+    webmSegment = std::make_unique<mkvmuxer::Segment>();
+    
+    if (!webmSegment->Init(webmWriter)) {
+        if (onError) onError("Failed to initialize WebM segment");
+        return false;
+    }
+    
+    // Add audio track to WebM - third parameter is track number (0 for auto-assign)
+    audioTrackNumber = webmSegment->AddAudioTrack(48000, 1, 0);
+    if (audioTrackNumber == 0) {
+        if (onError) onError("Failed to add audio track to WebM");
+        return false;
+    }
+    
+    // Configure audio track for Opus
+    mkvmuxer::AudioTrack* audioTrack = static_cast<mkvmuxer::AudioTrack*>(
+        webmSegment->GetTrackByNumber(audioTrackNumber));
+    if (audioTrack) {
+        audioTrack->set_codec_id(mkvmuxer::Tracks::kOpusCodecId);
+        audioTrack->SetCodecPrivate(nullptr, 0); // Opus doesn't need codec private data
+    }
+
+    shouldStop = false;
+    startThread();
+
+    // Wait for connection
+    for (int i = 0; i < 50 && !connected.load(); ++i)
+        Thread::sleep(100);
+
+    return connected.load();
+}
+
+void ColyseusRoomClient::leaveRoom()
+{
+    connected = false;
+    shouldReconnect = false; // Prevent auto-reconnect on manual leave
+    
+    // Clean up WebSocket connection
+    if (wsClient && connection) {
+        wsClient->close(connection, websocketpp::close::status::going_away, "Leaving room");
+    }
+    if (wsClient) {
+        wsClient->stop_perpetual();
+        wsClient->stop();
+    }
+    
+    if (onRoomLeft) onRoomLeft(currentRoomName);
+    currentRoomName = "";
+    currentPlayerId = "";
+    
+    // Clean up audio resources
+    if (opusEncoder) {
+        opus_encoder_destroy(opusEncoder);
+        opusEncoder = nullptr;
+    }
+    if (opusDecoder) {
+        opus_decoder_destroy(opusDecoder);
+        opusDecoder = nullptr;
+    }
+    
+    webmSegment.reset();
+    
+    // Clean up WebM writer using concrete type
+    if (memoryWriterConcrete) {
+        delete static_cast<MemoryWriter*>(memoryWriterConcrete);
+        memoryWriterConcrete = nullptr;
+        webmWriter = nullptr;
+    }
+}
+
+String ColyseusRoomClient::getCurrentRoom() const
+{
+    const ScopedLock lock(roomStateLock);
+    return currentRoomName;
+}
+
+String ColyseusRoomClient::getCurrentPlayerId() const
+{
+    const ScopedLock lock(roomStateLock);
+    return currentPlayerId;
+}
+
+void ColyseusRoomClient::sendAudioData(const float* audioData, int numSamples, int numChannels)
+{
+    if (!connected.load() || !opusEncoder || numSamples == 0)
+        return;
+    
+    // Queue audio for processing on background thread
+    const ScopedLock lock(audioQueueLock);
+    
+    AudioPacket packet;
+    packet.samples.assign(audioData, audioData + numSamples);
+    packet.numChannels = numChannels;
+    packet.timestamp = Time::getCurrentTime().toMilliseconds();
+    
+    audioQueue.push(packet);
+    
+    // Limit queue size to prevent memory buildup
+    while (audioQueue.size() > 10) {
+        audioQueue.pop();
+    }
+}
+
+void ColyseusRoomClient::setAudioReceiveCallback(std::function<void(const float*, int, int)> callback)
+{
+    const ScopedLock lock(audioCallbackLock);
+    audioReceiveCallback = std::move(callback);
+}
+
+StringArray ColyseusRoomClient::getConnectedUserList() const
+{
+    const ScopedLock lock(userListLock);
+    return userList;
+}
+
+void ColyseusRoomClient::run()
+{
+    if (onLogMessage) onLogMessage("Starting connection process...");
+    DBG("FL Stream: Starting connection process to " + serverUrl + " room: " + currentRoomName);
+    std::cout << "FL Stream: Starting connection process to " << serverUrl.toStdString() << " room: " << currentRoomName.toStdString() << std::endl;
+    
+    // Step 1: HTTP matchmaking request to get seat reservation
+    URL matchmakeUrl = URL(serverUrl).getChildURL("matchmake/joinOrCreate/" + currentRoomName);
+    if (onLogMessage) onLogMessage("Matchmaking URL: " + matchmakeUrl.toString(false));
+    DBG("FL Stream: Matchmaking URL: " + matchmakeUrl.toString(false));
+    
+    std::unique_ptr<InputStream> stream(matchmakeUrl.createInputStream(
+        URL::InputStreamOptions(URL::ParameterHandling::inAddress)
+            .withConnectionTimeoutMs(5000)
+            .withExtraHeaders("Content-Type: application/json")
+            .withHttpRequestCmd("POST")
+    ));
+    
+    if (!stream) {
+        if (onError) onError("Failed to connect to matchmaking server at: " + matchmakeUrl.toString(false));
+        DBG("FL Stream: ERROR - Failed to connect to matchmaking server");
+        std::cout << "FL Stream: ERROR - Failed to connect to matchmaking server at: " << matchmakeUrl.toString(false).toStdString() << std::endl;
+        return;
+    }
+    
+    String response = stream->readEntireStreamAsString();
+    if (onLogMessage) onLogMessage("Matchmaking response: " + response);
+    DBG("FL Stream: Matchmaking response received: " + response);
+    std::cout << "FL Stream: Matchmaking response: " << response.toStdString() << std::endl;
+    
+    // Parse JSON response to get roomId and sessionId
+    var roomData;
+    Result parseResult = JSON::parse(response, roomData);
+    if (parseResult.failed()) {
+        if (onError) onError("Failed to parse matchmaking response: " + parseResult.getErrorMessage());
+        return;
+    }
+    
+    String roomId = roomData["room"]["roomId"].toString();
+    String sessionId = roomData["sessionId"].toString();
+    
+    if (roomId.isEmpty() || sessionId.isEmpty()) {
+        if (onError) onError("Invalid room reservation - roomId: " + roomId + ", sessionId: " + sessionId);
+        return;
+    }
+    
+    if (onLogMessage) onLogMessage("Room reservation successful - roomId: " + roomId + ", sessionId: " + sessionId);
+    
+    // Store player ID from session
+    {
+        const ScopedLock lock(roomStateLock);
+        currentPlayerId = sessionId;
+    }
+    
+    // Step 2: Connect to WebSocket with seat reservation  
+    String wsUrl = serverUrl.replace("https://", "wss://").replace("http://", "ws://") + "/" + roomId + "?sessionId=" + sessionId;
+    if (onLogMessage) onLogMessage("Connecting to WebSocket: " + wsUrl);
+    std::cout << "FL Stream: WebSocket URL: " << wsUrl.toStdString() << std::endl;
+    
+    // Step 3: Establish WebSocket connection
+    try {
+        websocketpp::lib::error_code ec;
+        connection = wsClient->get_connection(wsUrl.toStdString(), ec);
+        if (ec) {
+            if (onError) onError("WebSocket connection failed: " + String(ec.message()));
+            return;
+        }
+        
+        // Set up connection event handlers
+        connection->set_open_handler([this](websocketpp::connection_hdl) {
+            connected = true;
+            if (onRoomJoined) onRoomJoined(currentRoomName);
+            if (onLogMessage) onLogMessage("WebSocket connected successfully");
+            std::cout << "FL Stream: WebSocket connected successfully" << std::endl;
+        });
+        
+        connection->set_close_handler([this](websocketpp::connection_hdl) {
+            connected = false;
+            if (onRoomLeft) onRoomLeft(currentRoomName);
+            if (onLogMessage) onLogMessage("WebSocket disconnected");
+            std::cout << "FL Stream: WebSocket disconnected" << std::endl;
+        });
+        
+        connection->set_fail_handler([this](websocketpp::connection_hdl) {
+            connected = false;
+            if (onError) onError("WebSocket connection failed");
+            std::cout << "FL Stream: WebSocket connection failed" << std::endl;
+        });
+        
+        connection->set_message_handler([this](websocketpp::connection_hdl, WSClient::message_ptr msg) {
+            handleWebSocketMessage(msg.get());
+        });
+        
+        // Connect to WebSocket
+        wsClient->connect(connection);
+        
+        // Start WebSocket event loop (non-blocking)
+        std::thread([this]() {
+            wsClient->run();
+        }).detach();
+        
+        std::cout << "FL Stream: WebSocket connection initiated" << std::endl;
+        
+    } catch (const std::exception& e) {
+        if (onError) onError("WebSocket exception: " + String(e.what()));
+        std::cout << "FL Stream: WebSocket exception: " << e.what() << std::endl;
+    }
+}
+
+void ColyseusRoomClient::processAudioQueue()
+{
+    const ScopedLock lock(audioQueueLock);
+    
+    while (!audioQueue.empty() && connected.load()) {
+        AudioPacket packet = audioQueue.front();
+        audioQueue.pop();
+        
+        // Encode audio with Opus (480 samples = 10ms at 48kHz)
+        std::vector<unsigned char> opusData(1024);
+        int numSamples = std::min(480, static_cast<int>(packet.samples.size()));
+        int encodedBytes = opus_encode_float(
+            opusEncoder,
+            packet.samples.data(),
+            numSamples,
+            opusData.data(),
+            static_cast<int>(opusData.size())
+        );
+        
+        if (encodedBytes < 0) {
+            if (onError) onError("Opus encoding failed: " + String(opus_strerror(encodedBytes)));
+            continue;
+        }
+        
+        // Add frame to WebM container
+        if (webmSegment->AddFrame(
+            opusData.data(),
+            encodedBytes,
+            audioTrackNumber,
+            packet.timestamp * 1000000, // Convert to nanoseconds
+            true // Key frame
+        )) {
+            // Get WebM data and send via WebSocket
+            MemoryWriter* memWriter = static_cast<MemoryWriter*>(memoryWriterConcrete);
+            std::vector<uint8_t> webmData = memWriter->getBuffer();
+            
+            if (!webmData.empty()) {
+                sendColyseusAudioMessage("talk", webmData);
+                memWriter->clearBuffer();
+            }
+        }
+    }
+}
+
+void ColyseusRoomClient::sendBinaryMessage(const std::vector<uint8_t>& data)
+{
+    if (!connected.load() || !connection) {
+        std::cout << "FL Stream: Cannot send message - not connected" << std::endl;
+        return;
+    }
+    
+    try {
+        wsClient->send(connection, data.data(), data.size(), websocketpp::frame::opcode::binary);
+        std::cout << "FL Stream: Sent binary message of " << data.size() << " bytes" << std::endl;
+    } catch (const std::exception& e) {
+        if (onError) onError("Failed to send binary message: " + String(e.what()));
+        std::cout << "FL Stream: Error sending binary message: " << e.what() << std::endl;
+    }
+}
+
+void ColyseusRoomClient::sendColyseusAudioMessage(const String& messageType, const std::vector<uint8_t>& audioData)
+{
+    std::vector<uint8_t> message;
+    message.push_back(static_cast<uint8_t>(ColyseusProtocolCode::ROOM_DATA_BYTES)); // Protocol code 17
+    
+    // Message type as msgpack string
+    if (messageType.length() < 32) {
+        message.push_back(0xa0 + messageType.length()); // fixstr
+        for (int i = 0; i < messageType.length(); ++i)
+            message.push_back(static_cast<uint8_t>(messageType[i]));
+    }
+    
+    // Append WebM audio data
+    message.insert(message.end(), audioData.begin(), audioData.end());
+    
+    sendBinaryMessage(message);
+}
+
+void ColyseusRoomClient::handleWebSocketMessage(void* msg)
+{
+    auto* message = static_cast<WSClient::message_ptr*>(msg);
+    if (!message || !*message) return;
+    
+    const std::string& payload = (*message)->get_payload();
+    std::vector<uint8_t> data(payload.begin(), payload.end());
+    
+    if (data.empty()) return;
+    
+    // Parse Colyseus protocol
+    uint8_t protocolCode = data[0];
+    
+    switch (static_cast<ColyseusProtocolCode>(protocolCode)) {
+        case ColyseusProtocolCode::ROOM_STATE:
+        case ColyseusProtocolCode::ROOM_STATE_PATCH:
+            if (data.size() > 1) {
+                std::vector<uint8_t> stateData(data.begin() + 1, data.end());
+                handleRoomState(stateData);
+            }
+            break;
+            
+        case ColyseusProtocolCode::ROOM_DATA_BYTES:
+            if (data.size() > 1) {
+                // Extract message type and audio data
+                std::vector<uint8_t> audioData(data.begin() + 1, data.end());
+                handleIncomingAudio(audioData);
+            }
+            break;
+            
+        case ColyseusProtocolCode::ERROR:
+            if (onError && data.size() > 1) {
+                std::string errorMsg(data.begin() + 1, data.end());
+                onError(String(errorMsg));
+            }
+            break;
+            
+        default:
+            std::cout << "FL Stream: Unknown protocol code: " << static_cast<int>(protocolCode) << std::endl;
+            break;
+    }
+}
+
+void ColyseusRoomClient::handleIncomingAudio(const std::vector<uint8_t>& webmData)
+{
+    if (!opusDecoder || !audioReceiveCallback || webmData.empty())
+        return;
+    
+    // Create memory reader for WebM data
+    class MemoryReader : public mkvparser::IMkvReader {
+    public:
+        MemoryReader(const std::vector<uint8_t>& data) : data_(data) {}
+        
+        int Read(long long pos, long len, unsigned char* buf) override {
+            if (pos < 0 || pos >= static_cast<long long>(data_.size()))
+                return -1;
+            
+            long long available = static_cast<long long>(data_.size()) - pos;
+            long actualLen = std::min(len, static_cast<long>(available));
+            
+            memcpy(buf, data_.data() + pos, actualLen);
+            return 0;
+        }
+        
+        int Length(long long* total, long long* available) override {
+            *total = *available = static_cast<long long>(data_.size());
+            return 0;
+        }
+        
+    private:
+        const std::vector<uint8_t>& data_;
+    };
+    
+    MemoryReader reader(webmData);
+    long long pos = 0;
+    
+    // Parse WebM segment
+    mkvparser::EBMLHeader ebmlHeader;
+    if (ebmlHeader.Parse(&reader, pos) < 0)
+        return;
+    
+    mkvparser::Segment* segment = nullptr;
+    if (mkvparser::Segment::CreateInstance(&reader, pos, segment) < 0)
+        return;
+    
+    if (segment->Load() < 0) {
+        delete segment;
+        return;
+    }
+    
+    // Find audio track
+    const mkvparser::Tracks* tracks = segment->GetTracks();
+    if (!tracks) {
+        delete segment;
+        return;
+    }
+    
+    for (unsigned long i = 0; i < tracks->GetTracksCount(); ++i) {
+        const mkvparser::Track* track = tracks->GetTrackByIndex(i);
+        if (!track || track->GetType() != mkvparser::Track::kAudio)
+            continue;
+        
+        const mkvparser::AudioTrack* audioTrack = static_cast<const mkvparser::AudioTrack*>(track);
+        
+        // Get first cluster and extract audio frames
+        const mkvparser::Cluster* cluster = segment->GetFirst();
+        if (!cluster) continue;
+        
+        const mkvparser::BlockEntry* blockEntry;
+        if (cluster->GetFirst(blockEntry) < 0) continue;
+        
+        while (blockEntry && !blockEntry->EOS()) {
+            const mkvparser::Block* block = blockEntry->GetBlock();
+            if (block && block->GetTrackNumber() == track->GetNumber()) {
+                
+                // Extract Opus frame data
+                const mkvparser::Block::Frame& frame = block->GetFrame(0);
+                const long frameSize = frame.len;
+                
+                if (frameSize > 0 && frameSize < 4096) { // Reasonable Opus frame size
+                    std::vector<unsigned char> opusFrame(frameSize);
+                    if (frame.Read(&reader, opusFrame.data()) == 0) {
+                        
+                        // Decode Opus frame
+                        std::vector<float> decodedSamples(480);
+                        int decodedCount = opus_decode_float(
+                            opusDecoder,
+                            opusFrame.data(),
+                            frameSize,
+                            decodedSamples.data(),
+                            480,
+                            0
+                        );
+                        
+                        if (decodedCount > 0) {
+                            audioReceiveCallback(decodedSamples.data(), decodedCount, 1);
+                        }
+                    }
+                }
+            }
+            
+            cluster->GetNext(blockEntry, blockEntry);
+        }
+        break; // Process first audio track only
+    }
+    
+    delete segment;
+}
+
+void ColyseusRoomClient::handleRoomState(const std::vector<uint8_t>& stateData)
+{
+    // Parse Colyseus room state (simplified msgpack parsing)
+    // Look for player entries in state data
+    const ScopedLock lock(userListLock);
+    
+    userList.clear();
+    
+    // Simplified: assume each 16-byte chunk is a player ID
+    for (size_t i = 0; i < stateData.size(); i += 16) {
+        if (i + 8 < stateData.size()) {
+            // Extract player ID (first 8 bytes as hex string)
+            String playerId = "";
+            for (int j = 0; j < 8 && (i + j) < stateData.size(); ++j) {
+                playerId += String::toHexString(static_cast<int>(stateData[i + j]));
+            }
+            
+            if (playerId.isNotEmpty()) {
+                userList.add(playerId);
+            }
+        }
+    }
+    
+    connectedUsers.store(userList.size());
+}

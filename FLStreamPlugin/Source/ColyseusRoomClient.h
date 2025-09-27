@@ -92,6 +92,9 @@ private:
     void joinRoomInternal();
     void handleColyseusMessage(const std::vector<uint8_t>& data);
     void processAudioMessage(const std::vector<uint8_t>& payload, const std::string& sessionId);
+    void processRoomState(const std::vector<uint8_t>& stateData, bool isPatch);
+    void parseUserListFromState(const std::vector<uint8_t>& stateData);
+    std::string decodeColyseusString(const std::vector<uint8_t>& data, size_t& offset);
 
     //==============================================================================
     // SSL WebSocket client
