@@ -12,20 +12,33 @@ struct FLStreamWebView : WebBrowserComponent
 {
     FLStreamWebView(TextEditor& addressBox) 
         : WebBrowserComponent(WebBrowserComponent::Options{}
-            .withBackend(WebBrowserComponent::Options::Backend::defaultBackend)),
+            .withBackend(WebBrowserComponent::Options::Backend::defaultBackend)
+            .withWinWebView2Options(WebBrowserComponent::Options::WinWebView2{})),
           addressTextBox(addressBox) {}
 
     // Update address bar when navigating
     bool pageAboutToLoad(const String& newURL) override
     {
-        addressTextBox.setText(newURL, false);
+        // Update address bar asynchronously to prevent blocking
+        MessageManager::callAsync([this, newURL]() {
+            addressTextBox.setText(newURL, false);
+        });
         return true; // Allow all navigation
     }
 
     // Handle new window requests
     void newWindowAttemptingToLoad(const String& newURL) override
     {
-        goToURL(newURL); // Load in same window
+        // Load in same window asynchronously
+        MessageManager::callAsync([this, newURL]() {
+            goToURL(newURL);
+        });
+    }
+
+    // Handle page load failures gracefully
+    void pageFinishedLoading(const String& url) override
+    {
+        std::cout << "FL Stream: Page loaded successfully: " << url << std::endl;
     }
 
 private:

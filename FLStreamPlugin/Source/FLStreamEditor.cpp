@@ -52,11 +52,13 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
     (void)processorRef;
 
     // Create the browser component for general web browsing
-    webComponent = std::make_unique<FLStreamWebView>(addressTextBox);
-    
-    addAndMakeVisible(webComponent.get());
-    
-    std::cout << "FL Stream: General Web Browser initialized" << std::endl;
+    try {
+        webComponent = std::make_unique<FLStreamWebView>(addressTextBox);
+        addAndMakeVisible(webComponent.get());
+        std::cout << "FL Stream: General Web Browser initialized" << std::endl;
+    } catch (...) {
+        std::cout << "FL Stream: WebView initialization failed, running without browser" << std::endl;
+    }
 
     // Store FL Stream Voice Chat HTML content
     flStreamHtmlContent = R"HTMLEND(
@@ -298,10 +300,19 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
     // CRITICAL: Force layout before loading URL
     resized();
     
-    // Load FL Stream Voice Chat by default
-    loadFLStreamHome();
-    
     std::cout << "FL Stream: Browser ready - " << webComponent->getBounds().toString() << std::endl;
+    
+    // Load FL Stream Voice Chat asynchronously to prevent hanging
+    juce::Timer::callAfterDelay(2000, [this]() {
+        if (webComponent) {
+            std::cout << "FL Stream: Starting delayed page load..." << std::endl;
+            try {
+                loadFLStreamHome();
+            } catch (...) {
+                std::cout << "FL Stream: Page load failed, browser ready for manual navigation" << std::endl;
+            }
+        }
+    });
 }
 
 //==============================================================================
