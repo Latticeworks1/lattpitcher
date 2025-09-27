@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.22)
 project(FLStreamPlugin VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Suppress UTF-8 compatibility warnings
+if(APPLE OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-Wno-pre-c++17-compat)
+endif()
 
 # Find required packages
 find_package(PkgConfig REQUIRED)

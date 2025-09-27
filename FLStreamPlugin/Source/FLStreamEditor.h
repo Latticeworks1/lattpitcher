@@ -81,7 +81,7 @@ struct FLStreamWebView : WebBrowserComponent
 
 //==============================================================================
 /** FL Stream Plugin WebView Editor - Colyseus Room Management */
-class FLStreamEditor : public AudioProcessorEditor
+class FLStreamEditor : public AudioProcessorEditor, public Timer
 {
 public:
     explicit FLStreamEditor(FLStreamProcessor& processor);
@@ -89,6 +89,7 @@ public:
     //==============================================================================
     void paint(Graphics&) override;
     void resized() override;
+    void timerCallback() override;
 
     int getControlParameterIndex(Component&) override
     {
@@ -113,8 +114,14 @@ private:
     // Native UI components (alternative to WebView)
     std::unique_ptr<TextButton> talkButton;
     std::unique_ptr<Label> statusLabel;
+    std::unique_ptr<Label> connectionStatusLabel;
     std::unique_ptr<Slider> volumeSlider;
     std::unique_ptr<ToggleButton> muteButton;
+    
+    // Interactive methods for native UI
+    void startTalking();
+    void stopTalking();
+    void updateConnectionStatus();
     
     // Default FL Stream Voice Chat HTML content
     String flStreamHtmlContent;

@@ -35,21 +35,51 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
     }
     
     if (currentUIMode == UIMode::Native) {
-        // Create minimal FL Stream native UI
+        // Create enhanced FL Stream native UI with web-like styling
         talkButton = std::make_unique<TextButton>("Push to Talk");
         talkButton->setButtonText("🎤 Push to Talk");
+        
+        // Enhanced button styling to match web interface
         talkButton->setColour(TextButton::buttonColourId, Colour(0xff4a90e2));
+        talkButton->setColour(TextButton::buttonOnColourId, Colour(0xff27ae60)); // Green when active
         talkButton->setColour(TextButton::textColourOffId, Colours::white);
+        talkButton->setColour(TextButton::textColourOnId, Colours::white);
+        talkButton->setSize(200, 50);
+        
+        // Add mouse interaction callbacks for visual feedback
+        talkButton->onStateChange = [this]() {
+            if (talkButton->isDown()) {
+                talkButton->setButtonText("🔴 Talking...");
+                talkButton->setColour(TextButton::buttonColourId, Colour(0xffe74c3c)); // Red when pushed
+                startTalking();
+            } else {
+                talkButton->setButtonText("🎤 Push to Talk");
+                talkButton->setColour(TextButton::buttonColourId, Colour(0xff4a90e2)); // Blue default
+                stopTalking();
+            }
+        };
+        
         addAndMakeVisible(talkButton.get());
         
-        statusLabel = std::make_unique<Label>("Status", "FLStream Voice Chat\nThis example uses messages to exchange raw binary audio data.\n\nroom.state.players:\nPlayer uHXGG-v9A\nPlayer TTifMYBQv (You)");
+        // Enhanced status label with better typography
+        statusLabel = std::make_unique<Label>("Status", "🎵 FLStream Voice Chat\nThis example uses messages to exchange raw binary audio data.\n\nroom.state.players:\nPlayer uHXGG-v9A\nPlayer TTifMYBQv (You)");
         statusLabel->setJustificationType(Justification::centred);
         statusLabel->setColour(Label::textColourId, Colours::white);
         statusLabel->setColour(Label::backgroundColourId, Colour(0xff2c2c2c));
-        statusLabel->setFont(Font(12.0f));
+        statusLabel->setFont(Font(14.0f)); // Slightly larger font
         addAndMakeVisible(statusLabel.get());
         
-        std::cout << "FL Stream: Minimal native UI initialized" << std::endl;
+        // Connection status indicator
+        connectionStatusLabel = std::make_unique<Label>("ConnectionStatus", "● Connecting...");
+        connectionStatusLabel->setJustificationType(Justification::centred);
+        connectionStatusLabel->setColour(Label::textColourId, Colour(0xfff39c12)); // Orange for connecting
+        connectionStatusLabel->setFont(Font(12.0f, Font::bold));
+        addAndMakeVisible(connectionStatusLabel.get());
+        
+        std::cout << "FL Stream: Enhanced native UI initialized with web-like styling" << std::endl;
+        
+        // Start periodic connection status updates
+        startTimer(1000); // Update every second
     }
 
     // Store FL Stream Voice Chat HTML content
@@ -289,22 +319,28 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
     
     setSize(1000, 700);
     
-    // CRITICAL: Force layout before loading URL
-    resized();
-    
-    std::cout << "FL Stream: Browser ready - " << webComponent->getBounds().toString() << std::endl;
-    
-    // Load FL Stream Voice Chat asynchronously to prevent hanging
-    juce::Timer::callAfterDelay(2000, [this]() {
-        if (webComponent) {
-            std::cout << "FL Stream: Starting delayed page load..." << std::endl;
-            try {
-                loadFLStreamHome();
-            } catch (...) {
-                std::cout << "FL Stream: Page load failed, browser ready for manual navigation" << std::endl;
+    // Only initialize WebView components if in WebView mode
+    if (currentUIMode == UIMode::WebView && webComponent) {
+        // CRITICAL: Force layout before loading URL
+        resized();
+        
+        std::cout << "FL Stream: Browser ready - " << webComponent->getBounds().toString() << std::endl;
+        
+        // Load FL Stream Voice Chat asynchronously to prevent hanging
+        juce::Timer::callAfterDelay(2000, [this]() {
+            if (webComponent) {
+                std::cout << "FL Stream: Starting delayed page load..." << std::endl;
+                try {
+                    loadFLStreamHome();
+                } catch (...) {
+                    std::cout << "FL Stream: Page load failed, browser ready for manual navigation" << std::endl;
+                }
             }
-        }
-    });
+        });
+    } else {
+        // Native UI mode - just resize
+        resized();
+    }
 }
 
 //==============================================================================
@@ -322,14 +358,22 @@ void FLStreamEditor::resized()
         webComponent->setBounds(area);
     }
     else if (currentUIMode == UIMode::Native) {
-        // Minimal native UI layout
+        // Enhanced native UI layout with connection status
         area.reduce(20, 20);
         
+        // Connection status at top
+        if (connectionStatusLabel) {
+            connectionStatusLabel->setBounds(area.removeFromTop(30));
+            area.removeFromTop(10);
+        }
+        
+        // Main status label
         if (statusLabel) {
             statusLabel->setBounds(area.removeFromTop(120));
             area.removeFromTop(20);
         }
         
+        // Talk button centered
         if (talkButton) {
             auto buttonArea = area.removeFromTop(60);
             talkButton->setBounds(buttonArea.reduced(buttonArea.getWidth() / 4, 0));
@@ -646,4 +690,53 @@ void FLStreamEditor::loadFLStreamHome()
         webComponent->goToURL("https://voice.latticeworks-ai.com");
         std::cout << "FL Stream: Loading FL Stream Voice Chat interface" << std::endl;
     }
+}
+
+//==============================================================================
+// Native UI Interactive Methods
+void FLStreamEditor::startTalking()
+{
+    std::cout << "FL Stream: Started talking (push-to-talk)" << std::endl;
+    
+    // Update processor talking parameter
+    auto* talkingParam = processorRef.parameters.getParameter("isTalking");
+    if (talkingParam) {
+        talkingParam->setValueNotifyingHost(1.0f);
+    }
+}
+
+void FLStreamEditor::stopTalking()
+{
+    std::cout << "FL Stream: Stopped talking (push-to-talk released)" << std::endl;
+    
+    // Update processor talking parameter
+    auto* talkingParam = processorRef.parameters.getParameter("isTalking");
+    if (talkingParam) {
+        talkingParam->setValueNotifyingHost(0.0f);
+    }
+}
+
+void FLStreamEditor::updateConnectionStatus()
+{
+    if (!connectionStatusLabel) return;
+    
+    bool isConnected = processorRef.isRoomConnected();
+    bool isConnecting = processorRef.isConnecting();
+    
+    if (isConnected) {
+        connectionStatusLabel->setText("● Connected", dontSendNotification);
+        connectionStatusLabel->setColour(Label::textColourId, Colour(0xff27ae60)); // Green
+    } else if (isConnecting) {
+        connectionStatusLabel->setText("● Connecting...", dontSendNotification);
+        connectionStatusLabel->setColour(Label::textColourId, Colour(0xfff39c12)); // Orange
+    } else {
+        connectionStatusLabel->setText("● Disconnected", dontSendNotification);
+        connectionStatusLabel->setColour(Label::textColourId, Colour(0xffe74c3c)); // Red
+    }
+}
+
+void FLStreamEditor::timerCallback()
+{
+    // Update connection status periodically
+    updateConnectionStatus();
 }
