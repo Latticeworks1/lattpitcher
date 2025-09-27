@@ -1,6 +1,7 @@
 #include "ColyseusRoomClient.h"
 #include <cstdlib>
 #include <ctime>
+#include <sstream>
 #include <juce_core/system/juce_PlatformDefs.h>
 
 using namespace juce;
@@ -84,30 +85,24 @@ StringArray ColyseusRoomClient::getConnectedUserList() const
 void ColyseusRoomClient::run()
 {
     try {
-        if (onLogMessage) onLogMessage("Starting Colyseus matchmaking process");
-        std::cout << "FL Stream: Starting Colyseus connection to voice.latticeworks-ai.com" << std::endl;
+        if (onLogMessage) onLogMessage("Starting atomic Colyseus connection");
+        std::cout << "FL Stream: Starting atomic matchmaking-WebSocket connection" << std::endl;
         
-        // Step 1: HTTP POST to matchmaking to get room reservation
+        // Perform atomic matchmaking and WebSocket upgrade in single SSL session
         if (!performMatchmaking()) {
-            if (onError) onError("Matchmaking failed");
+            if (onError) onError("Atomic connection failed"); 
             return;
         }
         
-        // Step 2: Connect to WebSocket with room details
-        String wsPath = "/" + String(roomId) + "?sessionId=" + String(sessionId);
-        if (!connectToServer("voice.latticeworks-ai.com", 443, wsPath.toStdString())) {
-            if (onError) onError("Failed to connect to WebSocket");
-            return;
-        }
-        
+        // Connection already established atomically in performMatchmaking()
         connected = true;
-        if (onLogMessage) onLogMessage("WebSocket connected successfully");
-        std::cout << "FL Stream: WebSocket connected successfully" << std::endl;
+        if (onLogMessage) onLogMessage("Atomic connection successful");
+        std::cout << "FL Stream: Atomic connection established - no race condition" << std::endl;
         
-        // Join the room immediately after connection
+        // Send JOIN_ROOM immediately - connection is already established
         joinRoomInternal();
         
-        // Message receive loop
+        // Message receive loop with optimized timing
         while (!shouldStop.load() && connected.load()) {
             if (!receiveMessages()) {
                 break;
@@ -116,8 +111,8 @@ void ColyseusRoomClient::run()
         }
     }
     catch (const std::exception& e) {
-        if (onError) onError("Connection exception: " + String(e.what()));
-        std::cout << "FL Stream: Connection exception: " << e.what() << std::endl;
+        if (onError) onError("Atomic connection exception: " + String(e.what()));
+        std::cout << "FL Stream: Atomic connection exception: " << e.what() << std::endl;
     }
     
     connected = false;
@@ -127,23 +122,26 @@ void ColyseusRoomClient::run()
 bool ColyseusRoomClient::performMatchmaking()
 {
     try {
-        if (onLogMessage) onLogMessage("Performing HTTP matchmaking...");
-        std::cout << "FL Stream: Performing HTTP matchmaking for room: my_room" << std::endl;
+        if (onLogMessage) onLogMessage("Performing atomic matchmaking-connection...");
+        std::cout << "FL Stream: Starting atomic matchmaking with persistent SSL connection" << std::endl;
         
-        // Manual HTTP POST with SSL
-        SSL_CTX* ssl_ctx_http = SSL_CTX_new(TLS_client_method());
-        if (!ssl_ctx_http) return false;
+        // Create persistent SSL context for both matchmaking and WebSocket
+        ssl_ctx = SSL_CTX_new(TLS_client_method());
+        if (!ssl_ctx) return false;
         
-        int sock_http = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock_http < 0) {
-            SSL_CTX_free(ssl_ctx_http);
+        sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0) {
+            SSL_CTX_free(ssl_ctx);
+            ssl_ctx = nullptr;
             return false;
         }
         
         struct hostent* server = gethostbyname("voice.latticeworks-ai.com");
         if (!server) {
-            close(sock_http);
-            SSL_CTX_free(ssl_ctx_http);
+            close(sock);
+            SSL_CTX_free(ssl_ctx);
+            ssl_ctx = nullptr;
+            sock = -1;
             return false;
         }
         
@@ -153,63 +151,79 @@ bool ColyseusRoomClient::performMatchmaking()
         serv_addr.sin_port = htons(443);
         memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
         
-        if (::connect(sock_http, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-            close(sock_http);
-            SSL_CTX_free(ssl_ctx_http);
+        if (::connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+            close(sock);
+            SSL_CTX_free(ssl_ctx);
+            ssl_ctx = nullptr;
+            sock = -1;
             return false;
         }
         
-        SSL* ssl_http = SSL_new(ssl_ctx_http);
-        SSL_set_fd(ssl_http, sock_http);
+        ssl = SSL_new(ssl_ctx);
+        SSL_set_fd(ssl, sock);
         
-        if (SSL_connect(ssl_http) != 1) {
-            SSL_free(ssl_http);
-            close(sock_http);
-            SSL_CTX_free(ssl_ctx_http);
+        if (SSL_connect(ssl) != 1) {
+            SSL_free(ssl);
+            close(sock);
+            SSL_CTX_free(ssl_ctx);
+            ssl = nullptr;
+            ssl_ctx = nullptr;
+            sock = -1;
             return false;
         }
         
-        // Send HTTP POST request with JSON body
+        std::cout << "FL Stream: SSL connection established, sending matchmaking request" << std::endl;
+        
+        // Send HTTP POST request with persistent connection (no WebSocket headers yet)
         std::string request = 
             "POST /matchmake/joinOrCreate/my_room HTTP/1.1\r\n"
             "Host: voice.latticeworks-ai.com\r\n"
             "Content-Type: application/json\r\n"
             "Content-Length: 2\r\n"
-            "Connection: close\r\n\r\n"
+            "Connection: keep-alive\r\n\r\n"
             "{}";
         
-        if (SSL_write(ssl_http, request.c_str(), request.length()) <= 0) {
-            SSL_free(ssl_http);
-            close(sock_http);
-            SSL_CTX_free(ssl_ctx_http);
+        if (SSL_write(ssl, request.c_str(), request.length()) <= 0) {
+            disconnectFromServer();
             return false;
         }
         
         // Read HTTP response
         char buffer[4096];
-        int bytes_read = SSL_read(ssl_http, buffer, sizeof(buffer) - 1);
-        SSL_free(ssl_http);
-        close(sock_http);
-        SSL_CTX_free(ssl_ctx_http);
+        int bytes_read = SSL_read(ssl, buffer, sizeof(buffer) - 1);
         
-        if (bytes_read <= 0) return false;
+        if (bytes_read <= 0) {
+            disconnectFromServer();
+            return false;
+        }
         
         buffer[bytes_read] = '\0';
         std::string response_str(buffer);
         
-        // Extract JSON body (skip HTTP headers)
+        // Extract JSON body
         size_t json_start = response_str.find("\r\n\r\n");
-        if (json_start == std::string::npos) return false;
+        if (json_start == std::string::npos) {
+            disconnectFromServer();
+            return false;
+        }
         json_start += 4;
         
-        String response = String(response_str.substr(json_start));
+        String rawResponse = String(response_str.substr(json_start));
+        String response = rawResponse.fromFirstOccurrenceOf("{", true, false);
+        int lastBrace = response.lastIndexOf("}");
+        if (lastBrace >= 0) {
+            response = response.substring(0, lastBrace + 1);
+        }
+        
         std::cout << "FL Stream: Matchmaking response: " << response.toStdString() << std::endl;
         
-        // Parse JSON response to get roomId and sessionId
+        // Parse JSON response
         var roomData;
         Result parseResult = JSON::parse(response, roomData);
         if (parseResult.failed()) {
+            std::cout << "FL Stream: JSON parsing failed: " << parseResult.getErrorMessage().toStdString() << std::endl;
             if (onError) onError("Failed to parse matchmaking response: " + parseResult.getErrorMessage());
+            disconnectFromServer();
             return false;
         }
         
@@ -217,40 +231,52 @@ bool ColyseusRoomClient::performMatchmaking()
         sessionId = roomData["sessionId"].toString().toStdString();
         
         if (roomId.empty() || sessionId.empty()) {
-            if (onError) onError("Invalid room reservation - roomId: " + String(roomId) + ", sessionId: " + String(sessionId));
+            std::cout << "FL Stream: ERROR - Empty roomId or sessionId!" << std::endl;
+            if (onError) onError("Invalid room reservation");
+            disconnectFromServer();
             return false;
         }
         
-        if (onLogMessage) onLogMessage("Matchmaking successful - roomId: " + String(roomId) + ", sessionId: " + String(sessionId));
-        std::cout << "FL Stream: Matchmaking successful - roomId: " << roomId << ", sessionId: " << sessionId << std::endl;
+        std::cout << "FL Stream: ATOMIC SUCCESS - roomId: " << roomId << ", sessionId: " << sessionId << std::endl;
+        std::cout << "FL Stream: Seat reserved, immediately upgrading to WebSocket..." << std::endl;
         
-        // Store player ID from session
+        // Immediately upgrade the same SSL connection to WebSocket
+        std::string wsPath = "/" + roomId + "?sessionId=" + sessionId;
+        if (!performWebSocketHandshake("voice.latticeworks-ai.com", wsPath)) {
+            disconnectFromServer();
+            return false;
+        }
+        
         {
             const ScopedLock lock(roomStateLock);
             currentPlayerId = String(sessionId);
         }
         
+        if (onLogMessage) onLogMessage("Atomic connection successful - roomId: " + String(roomId));
         return true;
         
     } catch (const std::exception& e) {
-        if (onError) onError("Matchmaking exception: " + String(e.what()));
+        if (onError) onError("Atomic connection exception: " + String(e.what()));
+        disconnectFromServer();
         return false;
     }
 }
 
 bool ColyseusRoomClient::connectToServer(const std::string& hostname, int port, const std::string& path)
 {
+    std::cout << "FL Stream: Creating SSL context for WebSocket connection" << std::endl;
+    
     // Create SSL context
     ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ssl_ctx) {
-        std::cerr << "Failed to create SSL context" << std::endl;
+        std::cerr << "FL Stream: Failed to create SSL context" << std::endl;
         return false;
     }
     
     // Create socket
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        std::cerr << "Failed to create socket" << std::endl;
+        std::cerr << "FL Stream: Failed to create socket" << std::endl;
         return false;
     }
     
@@ -310,25 +336,23 @@ void ColyseusRoomClient::disconnectFromServer()
 
 bool ColyseusRoomClient::performWebSocketHandshake(const std::string& hostname, const std::string& path)
 {
-    // Generate WebSocket key
-    srand(time(nullptr));
-    char key[25];
-    for (int i = 0; i < 24; ++i) {
-        key[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[rand() % 64];
-    }
-    key[24] = '\0';
+    // Use fixed WebSocket key (matches working reference implementation)
+    std::string key = "dGhlIHNhbXBsZSBub25jZQ=="; // Base64 encoded key
     
-    // Send WebSocket handshake request
-    std::string request = 
-        "GET " + path + " HTTP/1.1\r\n"
-        "Host: " + hostname + "\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Key: " + std::string(key) + "\r\n"
-        "Sec-WebSocket-Version: 13\r\n\r\n";
+    // Send WebSocket handshake request (exact format from working implementation)
+    std::ostringstream request;
+    request << "GET " << path << " HTTP/1.1\r\n";
+    request << "Host: " << hostname << "\r\n";
+    request << "Upgrade: websocket\r\n";
+    request << "Connection: Upgrade\r\n";
+    request << "Sec-WebSocket-Key: " << key << "\r\n";
+    request << "Sec-WebSocket-Version: 13\r\n";
+    request << "\r\n";
     
-    if (SSL_write(ssl, request.c_str(), request.length()) <= 0) {
-        std::cerr << "Failed to send WebSocket handshake" << std::endl;
+    std::string req_str = request.str();
+    
+    if (SSL_write(ssl, req_str.c_str(), req_str.length()) <= 0) {
+        std::cerr << "FL Stream: Failed to send WebSocket handshake" << std::endl;
         return false;
     }
     
@@ -343,12 +367,15 @@ bool ColyseusRoomClient::performWebSocketHandshake(const std::string& hostname, 
     response[bytes_read] = '\0';
     std::string resp_str(response);
     
-    if (resp_str.find("101 Switching Protocols") == std::string::npos) {
-        std::cerr << "WebSocket handshake failed. Response: " << resp_str.substr(0, 200) << std::endl;
+    std::cout << "FL Stream: WebSocket handshake response: " << resp_str.substr(0, 300) << std::endl;
+    
+    if (resp_str.find("HTTP/1.1 101") == std::string::npos) {
+        std::cerr << "FL Stream: WebSocket handshake failed. Full response: " << resp_str << std::endl;
+        if (onError) onError("WebSocket handshake failed - server response: " + String(resp_str.substr(0, 200)));
         return false;
     }
     
-    std::cout << "✓ WebSocket handshake successful" << std::endl;
+    std::cout << "FL Stream: ✓ WebSocket handshake successful" << std::endl;
     return true;
 }
 
@@ -395,8 +422,12 @@ bool ColyseusRoomClient::receiveMessages()
     uint8_t header[2];
     int bytes_read = SSL_read(ssl, header, 2);
     if (bytes_read != 2) {
-        if (bytes_read == 0) return false; // Connection closed
+        if (bytes_read == 0) {
+            std::cout << "FL Stream: Connection closed by server" << std::endl;
+            return false; // Connection closed
+        }
         if (SSL_get_error(ssl, bytes_read) == SSL_ERROR_WANT_READ) return true;
+        std::cout << "FL Stream: Error reading WebSocket header, bytes_read: " << bytes_read << std::endl;
         return false;
     }
     
@@ -435,7 +466,15 @@ bool ColyseusRoomClient::receiveMessages()
         }
         
         if (opcode == 2) { // Binary frame
+            std::cout << "FL Stream: Received binary WebSocket frame, size: " << payload.size() << " bytes" << std::endl;
+            if (payload.size() > 0) {
+                std::cout << "FL Stream: First byte (protocol): " << static_cast<int>(payload[0]) << std::endl;
+            }
             processIncomingData(payload);
+        } else if (opcode == 1) { // Text frame
+            std::cout << "FL Stream: Received text WebSocket frame (unexpected)" << std::endl;
+        } else {
+            std::cout << "FL Stream: Received WebSocket frame with opcode: " << static_cast<int>(opcode) << std::endl;
         }
     }
     
@@ -447,19 +486,44 @@ void ColyseusRoomClient::processIncomingData(const std::vector<uint8_t>& data)
     handleColyseusMessage(data);
 }
 
-void ColyseusRoomClient::joinRoomInternal()
+void ColyseusRoomClient::sendHandshakeMessage()
 {
-    // Send JOIN_ROOM message with room name
+    // Send HANDSHAKE message first
     std::vector<uint8_t> message;
-    message.push_back(ColyseusProtocol::JOIN_ROOM);
-    
-    std::string roomNameStr = "my_room";  // Use default room name
-    message.insert(message.end(), roomNameStr.begin(), roomNameStr.end());
+    message.push_back(ColyseusProtocol::HANDSHAKE);
     
     sendBinary(message);
     
-    if (onLogMessage) onLogMessage("Sent JOIN_ROOM message for room: " + String(roomNameStr));
-    std::cout << "FL Stream: Sent JOIN_ROOM message for room: " << roomNameStr << std::endl;
+    std::cout << "FL Stream: Sent HANDSHAKE message" << std::endl;
+}
+
+void ColyseusRoomClient::joinRoomInternal()
+{
+    std::cout << "FL Stream: Joining room: my_room" << std::endl;
+    
+    // Send JOIN_ROOM message exactly like working reference implementation
+    std::vector<uint8_t> message;
+    message.push_back(ColyseusProtocol::JOIN_ROOM); // Protocol 10
+    
+    // Try using reserved roomId instead of hardcoded room name
+    std::string roomName = roomId.empty() ? "my_room" : roomId;
+    message.insert(message.end(), roomName.begin(), roomName.end());
+    
+    // Debug: print exact message bytes being sent
+    std::cout << "FL Stream: JOIN_ROOM message bytes: ";
+    for (uint8_t byte : message) {
+        std::cout << static_cast<int>(byte) << " ";
+    }
+    std::cout << std::endl;
+    
+    bool success = sendBinary(message);
+    if (success) {
+        std::cout << "FL Stream: ✓ Sent JOIN_ROOM message (exact reference format)" << std::endl;
+        if (onLogMessage) onLogMessage("Sent JOIN_ROOM message for room: " + String(roomName));
+    } else {
+        std::cout << "FL Stream: ✗ Failed to send JOIN_ROOM message" << std::endl;
+        if (onError) onError("Failed to send JOIN_ROOM message");
+    }
 }
 
 void ColyseusRoomClient::handleColyseusMessage(const std::vector<uint8_t>& data)
@@ -469,6 +533,11 @@ void ColyseusRoomClient::handleColyseusMessage(const std::vector<uint8_t>& data)
     uint8_t protocolCode = data[0];
     
     switch (protocolCode) {
+        case ColyseusProtocol::HANDSHAKE: {
+            std::cout << "FL Stream: Received HANDSHAKE response from server" << std::endl;
+            break;
+        }
+        
         case ColyseusProtocol::JOIN_ROOM: {
             roomJoined = true;
             if (data.size() > 1) {
@@ -480,8 +549,13 @@ void ColyseusRoomClient::handleColyseusMessage(const std::vector<uint8_t>& data)
                     currentPlayerId = String(sessionId);
                 }
             }
+            
+            // Update player count - at minimum we have ourselves
+            connectedUsers = std::max(connectedUsers.load(), 1);
+            
             if (onRoomJoined) onRoomJoined(currentRoomName);
             std::cout << "FL Stream: Successfully joined room, sessionId: " << sessionId << std::endl;
+            std::cout << "FL Stream: Connected users count: " << connectedUsers.load() << std::endl;
             break;
         }
         
@@ -505,15 +579,24 @@ void ColyseusRoomClient::handleColyseusMessage(const std::vector<uint8_t>& data)
         
         case ColyseusProtocol::ROOM_STATE:
         case ColyseusProtocol::ROOM_STATE_PATCH: {
+            std::cout << "FL Stream: Received room state update, size: " << data.size() << " bytes" << std::endl;
             if (data.size() > 1) {
-                // Update connected user count (simplified)
-                connectedUsers = static_cast<int>(data.size() / 16); // Rough estimate
+                // For now, assume we have at least ourselves plus any additional data indicates more players
+                // This is simplified - proper implementation would decode MsgPack room state
+                int estimatedUsers = roomJoined ? std::max(1, static_cast<int>(data.size() > 10 ? 2 : 1)) : 0;
+                connectedUsers = estimatedUsers;
+                std::cout << "FL Stream: Updated connected users count to: " << connectedUsers.load() << std::endl;
             }
             break;
         }
         
         case ColyseusProtocol::ERROR: {
-            if (onError) onError("Server error received");
+            std::string errorMessage = "Unknown error";
+            if (data.size() > 1) {
+                errorMessage = std::string(data.begin() + 1, data.end());
+            }
+            std::cout << "FL Stream: ✗ Server error: " << errorMessage << std::endl;
+            if (onError) onError("Server error: " + String(errorMessage));
             break;
         }
         

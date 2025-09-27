@@ -88,6 +88,7 @@ private:
     bool receiveMessages();
     void processIncomingData(const std::vector<uint8_t>& data);
     
+    void sendHandshakeMessage();
     void joinRoomInternal();
     void handleColyseusMessage(const std::vector<uint8_t>& data);
     void processAudioMessage(const std::vector<uint8_t>& payload, const std::string& sessionId);

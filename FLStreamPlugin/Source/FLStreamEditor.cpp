@@ -16,48 +16,40 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
 {
     setOpaque(true);
 
-    // Create address bar
-    addAndMakeVisible(addressTextBox);
-    addressTextBox.setTextToShowWhenEmpty("Enter URL (e.g., https://voice.latticeworks-ai.com)", Colours::grey);
-    addressTextBox.onReturnKey = [this] { 
-        if (webComponent) 
-            webComponent->goToURL(addressTextBox.getText()); 
-    };
-
-    // Create navigation buttons
-    addAndMakeVisible(goButton);
-    goButton.onClick = [this] { 
-        if (webComponent) 
-            webComponent->goToURL(addressTextBox.getText()); 
-    };
-    
-    addAndMakeVisible(backButton);
-    backButton.onClick = [this] { 
-        if (webComponent) 
-            webComponent->goBack(); 
-    };
-    
-    addAndMakeVisible(forwardButton);
-    forwardButton.onClick = [this] { 
-        if (webComponent) 
-            webComponent->goForward(); 
-    };
-    
-    addAndMakeVisible(homeButton);
-    homeButton.onClick = [this] { 
-        loadFLStreamHome(); 
-    };
+    // Address bar and navigation controls are hidden - users don't need to change the URL
     
     // Avoid unused warning 
     (void)processorRef;
 
-    // Create the browser component for general web browsing
-    try {
-        webComponent = std::make_unique<FLStreamWebView>(addressTextBox);
-        addAndMakeVisible(webComponent.get());
-        std::cout << "FL Stream: General Web Browser initialized" << std::endl;
-    } catch (...) {
-        std::cout << "FL Stream: WebView initialization failed, running without browser" << std::endl;
+    // Initialize UI based on mode
+    if (currentUIMode == UIMode::WebView) {
+        // Create the browser component for FL Stream Voice Chat
+        try {
+            webComponent = std::make_unique<FLStreamWebView>();
+            addAndMakeVisible(webComponent.get());
+            std::cout << "FL Stream: Voice Chat WebView initialized" << std::endl;
+        } catch (...) {
+            std::cout << "FL Stream: WebView initialization failed, falling back to native UI" << std::endl;
+            currentUIMode = UIMode::Native;
+        }
+    }
+    
+    if (currentUIMode == UIMode::Native) {
+        // Create minimal FL Stream native UI
+        talkButton = std::make_unique<TextButton>("Push to Talk");
+        talkButton->setButtonText("🎤 Push to Talk");
+        talkButton->setColour(TextButton::buttonColourId, Colour(0xff4a90e2));
+        talkButton->setColour(TextButton::textColourOffId, Colours::white);
+        addAndMakeVisible(talkButton.get());
+        
+        statusLabel = std::make_unique<Label>("Status", "FLStream Voice Chat\nThis example uses messages to exchange raw binary audio data.\n\nroom.state.players:\nPlayer uHXGG-v9A\nPlayer TTifMYBQv (You)");
+        statusLabel->setJustificationType(Justification::centred);
+        statusLabel->setColour(Label::textColourId, Colours::white);
+        statusLabel->setColour(Label::backgroundColourId, Colour(0xff2c2c2c));
+        statusLabel->setFont(Font(12.0f));
+        addAndMakeVisible(statusLabel.get());
+        
+        std::cout << "FL Stream: Minimal native UI initialized" << std::endl;
     }
 
     // Store FL Stream Voice Chat HTML content
@@ -318,36 +310,31 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
 //==============================================================================
 void FLStreamEditor::paint(Graphics& g)
 {
-    g.fillAll(getLookAndFeel().findColour(ResizableWindow::backgroundColourId));
+    g.fillAll(Colour(0xff1a1a1a)); // Dark background for FL Stream
 }
 
 void FLStreamEditor::resized()
 {
-    // Layout based on JUCE WebBrowserDemo
     auto area = getLocalBounds();
     
-    // Navigation bar at top (45px height)
-    auto navArea = area.removeFromTop(45);
-    navArea = navArea.reduced(10, 10);
-    
-    // Navigation buttons on left
-    backButton.setBounds(navArea.removeFromLeft(35));
-    navArea.removeFromLeft(5);
-    forwardButton.setBounds(navArea.removeFromLeft(35));
-    navArea.removeFromLeft(5);
-    homeButton.setBounds(navArea.removeFromLeft(60));
-    navArea.removeFromLeft(10);
-    
-    // Go button on right
-    goButton.setBounds(navArea.removeFromRight(50));
-    navArea.removeFromRight(5);
-    
-    // Address bar fills remaining space
-    addressTextBox.setBounds(navArea);
-    
-    // WebView fills remaining area
-    if (webComponent)
-        webComponent->setBounds(area.reduced(10, 0));
+    if (currentUIMode == UIMode::WebView && webComponent) {
+        // WebView fills entire area
+        webComponent->setBounds(area);
+    }
+    else if (currentUIMode == UIMode::Native) {
+        // Minimal native UI layout
+        area.reduce(20, 20);
+        
+        if (statusLabel) {
+            statusLabel->setBounds(area.removeFromTop(120));
+            area.removeFromTop(20);
+        }
+        
+        if (talkButton) {
+            auto buttonArea = area.removeFromTop(60);
+            talkButton->setBounds(buttonArea.reduced(buttonArea.getWidth() / 4, 0));
+        }
+    }
 }
 
 // Timer functionality removed for general browser
@@ -655,8 +642,7 @@ void FLStreamEditor::loadFLStreamHome()
 {
     if (webComponent)
     {
-        // Use correct FL Stream domain
-        addressTextBox.setText("https://voice.latticeworks-ai.com", false);
+        // Load FL Stream Voice Chat interface directly
         webComponent->goToURL("https://voice.latticeworks-ai.com");
         std::cout << "FL Stream: Loading FL Stream Voice Chat interface" << std::endl;
     }

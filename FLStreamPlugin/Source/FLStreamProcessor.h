@@ -10,6 +10,8 @@ using namespace juce;
 // Parameter IDs
 static constexpr const char* PARAM_IS_CONNECTED = "isConnected";
 static constexpr const char* PARAM_IS_TALKING = "isTalking";
+static constexpr const char* PARAM_ROOM_VOLUME = "roomVolume";
+static constexpr const char* PARAM_MUTE = "mute";
 
 //==============================================================================
 /** FL Stream Processor - Colyseus Room Management */

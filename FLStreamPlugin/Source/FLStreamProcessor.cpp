@@ -83,15 +83,7 @@ FLStreamProcessor::FLStreamProcessor()
     // Audio receive is now handled via getNextAudioMessage() in processRoomCollaboration
     // No callback needed with the proven implementation
     
-    // Auto-join the default room on startup - use voice subdomain where server is running
-    Timer::callAfterDelay(2000, [this]() {
-        const ScopedLock statusLock(statusMutex);
-        connectionStatusText = "Auto-connecting to default room...";
-        lastLogMessage = "Starting auto-connection to my_room";
-        connectionState.store(ConnectionState::Connecting);
-        
-        joinRoom("my_room", "ws://voice.latticeworks-ai.com:80");
-    });
+    // Auto-join will be triggered by WebView interface to avoid GUI conflicts
 }
 
 //==============================================================================
@@ -102,7 +94,7 @@ void FLStreamProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     if (channels == 0)
         return;
     
-    // Initialize audio processing here if needed
+    // Audio processing initialization complete
 }
 
 bool FLStreamProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -286,12 +278,19 @@ AudioProcessorValueTreeState::ParameterLayout FLStreamProcessor::createParameter
 {
     std::vector<std::unique_ptr<RangedAudioParameter>> params;
     
-    // Minimal parameters for automation if needed
+    // Connection and talk state parameters
     params.push_back(std::make_unique<AudioParameterBool>(
         PARAM_IS_CONNECTED, "Connected", false));
     
     params.push_back(std::make_unique<AudioParameterBool>(
         PARAM_IS_TALKING, "Talking", false));
+    
+    // Room audio controls
+    params.push_back(std::make_unique<AudioParameterFloat>(
+        PARAM_ROOM_VOLUME, "Room Volume", 0.0f, 1.0f, 0.8f));
+    
+    params.push_back(std::make_unique<AudioParameterBool>(
+        PARAM_MUTE, "Mute", false));
     
     return { params.begin(), params.end() };
 }
