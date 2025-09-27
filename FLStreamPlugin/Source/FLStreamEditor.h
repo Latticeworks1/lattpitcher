@@ -7,18 +7,34 @@
 using namespace juce;
 
 //==============================================================================
-/** Single Page WebView for FL Stream Plugin Room Management */
+/** General Web Browser for FL Stream Plugin */
 struct FLStreamWebView : WebBrowserComponent
 {
-    using WebBrowserComponent::WebBrowserComponent;
+    FLStreamWebView(TextEditor& addressBox) 
+        : WebBrowserComponent(WebBrowserComponent::Options{}
+            .withBackend(WebBrowserComponent::Options::Backend::defaultBackend)),
+          addressTextBox(addressBox) {}
 
-    // Prevent navigation away from our room management interface
-    bool pageAboutToLoad(const String& newURL) override;
+    // Update address bar when navigating
+    bool pageAboutToLoad(const String& newURL) override
+    {
+        addressTextBox.setText(newURL, false);
+        return true; // Allow all navigation
+    }
+
+    // Handle new window requests
+    void newWindowAttemptingToLoad(const String& newURL) override
+    {
+        goToURL(newURL); // Load in same window
+    }
+
+private:
+    TextEditor& addressTextBox;
 };
 
 //==============================================================================
 /** FL Stream Plugin WebView Editor - Colyseus Room Management */
-class FLStreamEditor : public AudioProcessorEditor, private Timer
+class FLStreamEditor : public AudioProcessorEditor
 {
 public:
     explicit FLStreamEditor(FLStreamProcessor& processor);
@@ -29,85 +45,27 @@ public:
 
     int getControlParameterIndex(Component&) override
     {
-        return controlParameterIndexReceiver.getControlParameterIndex();
+        return -1; // No parameter control mapping for web browser
     }
 
-    void timerCallback() override;
-
     std::optional<WebBrowserComponent::Resource> getResource(const String& url);
+    void loadFLStreamHome();
 
 private:
     FLStreamProcessor& processorRef;
 
-    // Minimal WebView relays
-    WebSliderRelay roomVolumeRelay{"roomVolumeSlider"};
-    WebToggleButtonRelay muteToggleRelay{"muteToggle"};
-    WebToggleButtonRelay talkButtonRelay{"talkButton"};
+    // Browser navigation components
+    TextEditor addressTextBox;
+    TextButton goButton{"Go", "Go to URL"};
+    TextButton backButton{"<<", "Back"};
+    TextButton forwardButton{">>", "Forward"};
+    TextButton homeButton{"Home", "FL Stream Voice Chat"};
+
+    // Main WebView component - general browser
+    std::unique_ptr<FLStreamWebView> webComponent;
     
-    WebControlParameterIndexReceiver controlParameterIndexReceiver;
-
-    // Main WebView component with room management interface
-    FLStreamWebView webComponent{
-        WebBrowserComponent::Options{}
-            .withBackend(WebBrowserComponent::Options::Backend::webview2)
-            .withWinWebView2Options(WebBrowserComponent::Options::WinWebView2{}
-                .withUserDataFolder(File::getSpecialLocation(File::SpecialLocationType::tempDirectory)))
-            .withNativeIntegrationEnabled()
-            .withOptionsFrom(roomVolumeRelay)
-            .withOptionsFrom(muteToggleRelay)
-            .withOptionsFrom(talkButtonRelay)
-            .withOptionsFrom(controlParameterIndexReceiver)
-            .withNativeFunction("joinRoom", [this](auto& var, auto complete)
-            {
-                String roomName = var[0].toString();
-                String serverAddress = var[1].toString();
-                
-                bool success = processorRef.joinRoom(roomName, serverAddress);
-                if (success)
-                {
-                    complete("Successfully joined room: " + roomName);
-                }
-                else
-                {
-                    complete("Failed to join room: " + roomName);
-                }
-            })
-            .withNativeFunction("leaveRoom", [this](auto&, auto complete)
-            {
-                processorRef.leaveRoom();
-                complete("Left room");
-            })
-            .withNativeFunction("getStatus", [this](auto&, auto complete)
-            {
-                DynamicObject::Ptr status(new DynamicObject());
-                status->setProperty("roomName", processorRef.getCurrentRoomName());
-                status->setProperty("serverAddress", processorRef.getServerAddress());
-                status->setProperty("isConnected", processorRef.isRoomConnected());
-                status->setProperty("roomEnabled", processorRef.isRoomConnected());
-                status->setProperty("connectedUsers", processorRef.connectedUsers.load());
-                status->setProperty("audioLevel", processorRef.audioLevel.load());
-                
-                // Enhanced status information
-                status->setProperty("connectionStatus", processorRef.getConnectionStatusText());
-                status->setProperty("lastError", processorRef.getLastErrorMessage());
-                status->setProperty("lastLog", processorRef.getLastLogMessage());
-                status->setProperty("isConnecting", processorRef.isConnecting());
-                
-                complete(var(status));
-            })
-            .withResourceProvider([this](const auto& url)
-            {
-                return getResource(url);
-            }, URL{"http://localhost:3000/"}.getOrigin())
-    };
-
-    // Parameter attachments for VST automation
-    WebSliderParameterAttachment roomVolumeAttachment;
-    WebToggleButtonParameterAttachment muteAttachment;
-    WebToggleButtonParameterAttachment talkButtonAttachment;
-
-    // Real-time status data for web interface
-    std::deque<Array<var>> statusFrames;
+    // Default FL Stream Voice Chat HTML content
+    String flStreamHtmlContent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FLStreamEditor)
 };

@@ -7,35 +7,301 @@ const String localColouseusServerAddress = "https://voice.latticeworks-ai.com/";
 const String localColouseusServerAddress = "https://voice.latticeworks-ai.com/";
 #endif
 
-//==============================================================================
-bool FLStreamWebView::pageAboutToLoad(const String& newURL)
-{
-    // Only allow our Colyseus server and local resource URLs
-    return newURL.startsWith(localColouseusServerAddress) || 
-           newURL == getResourceProviderRoot();
-}
+// Implementation moved to header file
 
 //==============================================================================
 FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
     : AudioProcessorEditor(p), 
-      processorRef(p),
-      roomVolumeAttachment(*processorRef.parameters.getParameter(PARAM_IS_CONNECTED),
-                          roomVolumeRelay,
-                          processorRef.parameters.undoManager),
-      muteAttachment(*processorRef.parameters.getParameter(PARAM_IS_CONNECTED),
-                    muteToggleRelay,
-                    processorRef.parameters.undoManager),
-      talkButtonAttachment(*processorRef.parameters.getParameter(PARAM_IS_TALKING),
-                          talkButtonRelay,
-                          processorRef.parameters.undoManager)
+      processorRef(p)
 {
-    addAndMakeVisible(webComponent);
+    setOpaque(true);
 
-    // Load the room management interface
-    webComponent.goToURL(WebBrowserComponent::getResourceProviderRoot());
+    // Create address bar
+    addAndMakeVisible(addressTextBox);
+    addressTextBox.setTextToShowWhenEmpty("Enter URL (e.g., https://voice.latticeworks-ai.com)", Colours::grey);
+    addressTextBox.onReturnKey = [this] { 
+        if (webComponent) 
+            webComponent->goToURL(addressTextBox.getText()); 
+    };
 
-    setSize(800, 600);
-    startTimerHz(30); // 30fps updates for real-time room status
+    // Create navigation buttons
+    addAndMakeVisible(goButton);
+    goButton.onClick = [this] { 
+        if (webComponent) 
+            webComponent->goToURL(addressTextBox.getText()); 
+    };
+    
+    addAndMakeVisible(backButton);
+    backButton.onClick = [this] { 
+        if (webComponent) 
+            webComponent->goBack(); 
+    };
+    
+    addAndMakeVisible(forwardButton);
+    forwardButton.onClick = [this] { 
+        if (webComponent) 
+            webComponent->goForward(); 
+    };
+    
+    addAndMakeVisible(homeButton);
+    homeButton.onClick = [this] { 
+        loadFLStreamHome(); 
+    };
+    
+    // Avoid unused warning 
+    (void)processorRef;
+
+    // Create the browser component for general web browsing
+    webComponent = std::make_unique<FLStreamWebView>(addressTextBox);
+    
+    addAndMakeVisible(webComponent.get());
+    
+    std::cout << "FL Stream: General Web Browser initialized" << std::endl;
+
+    // Store FL Stream Voice Chat HTML content
+    flStreamHtmlContent = R"HTMLEND(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FL Stream Voice Chat</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #2c2c2c;
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            text-align: center;
+            max-width: 400px;
+        }
+        h1 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+        .subtitle {
+            font-size: 1em;
+            color: #aaa;
+            margin-bottom: 30px;
+        }
+        #btn-talk {
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+            outline: none;
+            min-width: 200px;
+        }
+        #btn-talk:active, #btn-talk.talking {
+            background: #27ae60;
+            transform: scale(1.1);
+        }
+        #btn-talk.pushing {
+            background: #e74c3c;
+            transform: scale(1.1);
+        }
+        #btn-talk:disabled {
+            background: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .status {
+            margin-top: 30px;
+            padding: 15px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #e74c3c;
+            margin-right: 8px;
+        }
+        .status-dot.connected {
+            background: #27ae60;
+        }
+        .players {
+            margin-top: 20px;
+            text-align: left;
+        }
+        .players h3 {
+            color: #4a90e2;
+            margin-bottom: 10px;
+            font-size: 1em;
+        }
+        .player-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .player-list li {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-size: 0.9em;
+        }
+        .player-list li:last-child {
+            border-bottom: none;
+        }
+        .player-list li.current-user {
+            font-weight: bold;
+            color: #4a90e2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 FL Stream Voice Chat</h1>
+        <p class="subtitle">Real-time voice collaboration for music production</p>
+        
+        <button id="btn-talk" 
+                onmousedown="startTalking()" 
+                onmouseup="stopTalking()"
+                onmouseleave="stopTalking()">
+            🎤 Push to Talk
+        </button>
+        
+        <div class="status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Connecting...</span>
+        </div>
+        
+        <div class="players">
+            <h3>Connected Users:</h3>
+            <ul class="player-list" id="playerList">
+                <li>Connecting to room...</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let isConnected = false;
+        let isTalking = false;
+        
+        function startTalking() {
+            if (!isConnected) return;
+            
+            console.log('Started talking');
+            isTalking = true;
+            
+            const talkBtn = document.getElementById('btn-talk');
+            talkBtn.classList.add('pushing');
+            talkBtn.textContent = '🔴 Talking...';
+            
+            // Set the talking parameter to true
+            if (window.talkButton) {
+                window.talkButton.setValue(1.0);
+            }
+        }
+        
+        function stopTalking() {
+            if (!isTalking) return;
+            
+            console.log('Stopped talking');
+            isTalking = false;
+            
+            const talkBtn = document.getElementById('btn-talk');
+            talkBtn.classList.remove('pushing');
+            talkBtn.textContent = '🎤 Push to Talk';
+            
+            // Set the talking parameter to false
+            if (window.talkButton) {
+                window.talkButton.setValue(0.0);
+            }
+        }
+        
+        function updateStatus() {
+            if (window.getStatus) {
+                window.getStatus((status) => {
+                    if (typeof status === 'object') {
+                        isConnected = status.isConnected;
+                        
+                        // Update connection status
+                        const statusDot = document.getElementById('statusDot');
+                        const statusText = document.getElementById('statusText');
+                        
+                        if (isConnected) {
+                            statusDot.className = 'status-dot connected';
+                            statusText.textContent = 'Connected to ' + (status.roomName || 'room');
+                        } else {
+                            statusDot.className = 'status-dot';
+                            statusText.textContent = status.connectionStatus || 'Disconnected';
+                        }
+                        
+                        // Update talk button state
+                        const talkBtn = document.getElementById('btn-talk');
+                        talkBtn.disabled = !isConnected;
+                        
+                        // Update players list
+                        updatePlayersList(status.connectedUsers || 0);
+                    }
+                });
+            }
+        }
+        
+        function updatePlayersList(userCount) {
+            const playerList = document.getElementById('playerList');
+            
+            if (userCount === 0) {
+                playerList.innerHTML = '<li>No other users connected</li>';
+            } else {
+                let html = '<li class="current-user">You</li>';
+                for (let i = 1; i < userCount; i++) {
+                    html += `<li>User ${i + 1}</li>`;
+                }
+                playerList.innerHTML = html;
+            }
+        }
+        
+        // Auto-join room on load
+        setTimeout(() => {
+            if (window.joinRoom) {
+                window.joinRoom('my_room', 'https://voice.latticeworks-ai.com', (result) => {
+                    console.log('Auto-join result:', result);
+                });
+            }
+        }, 1000);
+        
+        // Prevent context menu and selection
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        document.addEventListener('selectstart', e => e.preventDefault());
+        
+        // Update status regularly
+        setInterval(updateStatus, 1000);
+        updateStatus();
+    </script>
+</body>
+</html>
+    )HTMLEND";
+    
+    setSize(1000, 700);
+    
+    // CRITICAL: Force layout before loading URL
+    resized();
+    
+    // Load FL Stream Voice Chat by default
+    loadFLStreamHome();
+    
+    std::cout << "FL Stream: Browser ready - " << webComponent->getBounds().toString() << std::endl;
 }
 
 //==============================================================================
@@ -46,39 +312,34 @@ void FLStreamEditor::paint(Graphics& g)
 
 void FLStreamEditor::resized()
 {
-    webComponent.setBounds(getLocalBounds());
-}
-
-//==============================================================================
-void FLStreamEditor::timerCallback()
-{
-    static constexpr size_t numFramesBuffered = 10;
-
-    SpinLock::ScopedLockType lock{processorRef.statusLock};
-
-    Array<var> frame;
+    // Layout based on JUCE WebBrowserDemo
+    auto area = getLocalBounds();
     
-    // Gather real-time status data
-    frame.add(processorRef.getCurrentRoomName());
-    frame.add(processorRef.getServerAddress());
-    frame.add(processorRef.isRoomConnected());
-    frame.add(processorRef.isRoomConnected()); // Connection status
-    frame.add(processorRef.connectedUsers.load());
-    frame.add(processorRef.audioLevel.load());
-
-    statusFrames.push_back(std::move(frame));
-
-    while (statusFrames.size() > numFramesBuffered)
-        statusFrames.pop_front();
-
-    static int64 callbackCounter = 0;
-
-    // Send status updates to web interface every few frames
-    if (statusFrames.size() == numFramesBuffered && callbackCounter++ % 5 == 0)
-    {
-        webComponent.emitEventIfBrowserIsVisible("statusUpdate", var{});
-    }
+    // Navigation bar at top (45px height)
+    auto navArea = area.removeFromTop(45);
+    navArea = navArea.reduced(10, 10);
+    
+    // Navigation buttons on left
+    backButton.setBounds(navArea.removeFromLeft(35));
+    navArea.removeFromLeft(5);
+    forwardButton.setBounds(navArea.removeFromLeft(35));
+    navArea.removeFromLeft(5);
+    homeButton.setBounds(navArea.removeFromLeft(60));
+    navArea.removeFromLeft(10);
+    
+    // Go button on right
+    goButton.setBounds(navArea.removeFromRight(50));
+    navArea.removeFromRight(5);
+    
+    // Address bar fills remaining space
+    addressTextBox.setBounds(navArea);
+    
+    // WebView fills remaining area
+    if (webComponent)
+        webComponent->setBounds(area.reduced(10, 0));
 }
+
+// Timer functionality removed for general browser
 
 //==============================================================================
 std::optional<WebBrowserComponent::Resource> FLStreamEditor::getResource(const String& url)
@@ -98,8 +359,16 @@ std::optional<WebBrowserComponent::Resource> FLStreamEditor::getResource(const S
         }
     }
 
-    // Fallback to embedded HTML interface
-    if (urlToRetrive == "index.html")
+    // Return FL Stream Voice Chat interface for local URLs
+    if (urlToRetrive == "index.html" || urlToRetrive == "" || url == "/" || url == "flstream://home")
+    {
+        std::cout << "FL Stream: Serving FL Stream Voice Chat interface" << std::endl;
+        MemoryInputStream stream{flStreamHtmlContent.getCharPointer(), flStreamHtmlContent.getNumBytesAsUTF8(), false};
+        return WebBrowserComponent::Resource{streamToVector(stream), String{"text/html"}};
+    }
+    
+    // Fallback to simpler HTML interface if above doesn't work
+    if (urlToRetrive == "fallback.html")
     {
         const String fallbackHtml = R"HTMLEND(
 <!DOCTYPE html>
@@ -107,334 +376,189 @@ std::optional<WebBrowserComponent::Resource> FLStreamEditor::getResource(const S
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FL Stream - Room Management</title>
+    <title>FL Stream Voice Chat</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #393f47 0%, #4a5058 100%);
-            color: #ffffff;
+            background: #f5f5f5;
+            color: #333;
             margin: 0;
             padding: 20px;
             min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
         .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: rgba(74, 80, 88, 0.8);
-            border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            max-width: 400px;
         }
         h1 {
-            color: #5fb3d4;
-            text-align: center;
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            color: #666;
+        }
+        .subtitle {
+            font-size: 1em;
+            color: #999;
             margin-bottom: 30px;
-            font-size: 2.2em;
         }
-        .status-section {
-            background: rgba(95, 179, 212, 0.1);
-            border: 1px solid #5fb3d4;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .room-section {
-            background: rgba(124, 181, 24, 0.1);
-            border: 1px solid #7cb518;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .input-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            color: #b8bcc2;
-            font-weight: 500;
-        }
-        input, select, button {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #5a5a5a;
-            border-radius: 6px;
-            background: #2c2c2c;
-            color: #ffffff;
-            font-size: 14px;
-            box-sizing: border-box;
-        }
-        button {
-            background: linear-gradient(135deg, #5fb3d4 0%, #4a9bc4 100%);
+        #btn-talk {
+            background: #4a90e2;
+            color: white;
             border: none;
+            border-radius: 25px;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            font-weight: 500;
             cursor: pointer;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
+            user-select: none;
+            outline: none;
         }
-        button:hover {
-            background: linear-gradient(135deg, #4a9bc4 0%, #3d8ab4 100%);
-            transform: translateY(-1px);
+        #btn-talk:active, #btn-talk.talking {
+            background: #27ae60;
+            transform: scale(1.4);
         }
-        button:disabled {
-            background: #666;
+        #btn-talk.pushing {
+            background: #f39c12;
+        }
+        #btn-talk:disabled {
+            background: #ccc;
             cursor: not-allowed;
             transform: none;
         }
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
+        .players {
+            margin-top: 40px;
+            text-align: left;
         }
-        .connected { background: #7cb518; }
-        .disconnected { background: #e74c3c; }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
+        .players h3 {
+            color: #c44569;
+            margin-bottom: 15px;
+            font-size: 1.2em;
         }
-        .stat-item {
-            text-align: center;
-            padding: 15px;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 6px;
+        .player-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        .stat-value {
-            font-size: 1.8em;
+        .player-list li {
+            padding: 12px 15px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+        .player-list li:last-child {
+            border-bottom: none;
+        }
+        .player-list li.current-user {
             font-weight: bold;
-            color: #5fb3d4;
         }
-        .stat-label {
+        .player-list li.pushing {
+            background: #fff3cd;
+        }
+        .player-list li.talking {
+            background: #d4edda;
+        }
+        .connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
             font-size: 0.9em;
-            color: #b8bcc2;
-            margin-top: 5px;
+            color: #999;
         }
-        .status-detail {
-            font-size: 0.9em;
-            margin: 8px 0;
-            padding: 5px;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 4px;
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #e74c3c;
+            margin-right: 5px;
         }
-        .connecting {
-            background: #f39c12;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 0.6; }
-            50% { opacity: 1; }
-            100% { opacity: 0.6; }
+        .status-dot.connected {
+            background: #27ae60;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>FL Stream Plugin</h1>
-        
-        <div class="status-section">
-            <h3>Connection Status</h3>
-            <div id="connectionStatus">
-                <span class="status-indicator disconnected"></span>
-                <span id="statusText">Disconnected</span>
-            </div>
-            
-            <!-- Detailed status information -->
-            <div id="detailedStatus" style="margin-top: 15px;">
-                <div class="status-detail">
-                    <strong>Status:</strong> <span id="connectionStatusDetail">Waiting...</span>
-                </div>
-                <div class="status-detail" id="lastLogContainer" style="display: none;">
-                    <strong>Last Activity:</strong> <span id="lastLogMessage">-</span>
-                </div>
-                <div class="status-detail" id="errorContainer" style="display: none; color: #e74c3c;">
-                    <strong>Error:</strong> <span id="errorMessage">-</span>
-                </div>
-            </div>
-            
-            <div class="stats">
-                <div class="stat-item">
-                    <div class="stat-value" id="connectedUsers">0</div>
-                    <div class="stat-label">Users</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="audioLevel">0%</div>
-                    <div class="stat-label">Audio Level</div>
-                </div>
-            </div>
-        </div>
+    <div class="connection-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Disconnected</span>
+    </div>
 
-        <div class="room-section">
-            <h3>Colyseus Room</h3>
-            
-            <div class="input-group">
-                <label for="serverAddress">Server URL</label>
-                <input type="text" id="serverAddress" value="https://voice.latticeworks-ai.com" placeholder="https://your-colyseus-server.com">
-            </div>
-            
-            <div class="input-group">
-                <label for="roomName">Room Name</label>
-                <input type="text" id="roomName" placeholder="my-room" maxlength="50">
-            </div>
-            
-            <button id="joinBtn" onclick="joinRoom()">Join Room</button>
-            <button id="leaveBtn" onclick="leaveRoom()" style="margin-top: 10px; background: #e74c3c;" disabled>Leave Room</button>
-            
-            <!-- Push-to-Talk Button -->
-            <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px;">
-                <h4 style="margin: 0 0 10px 0; color: #5fb3d4;">Push to Talk</h4>
-                <button id="talkButton" 
-                        onpointerdown="startTalking()" 
-                        onpointerup="stopTalking()" 
-                        style="padding: 15px 30px; font-size: 1.1em; background: #27ae60; border: none; border-radius: 6px; color: white; cursor: pointer; width: 100%; user-select: none;"
-                        disabled>
-                    Hold to Talk
-                </button>
-                <p style="font-size: 0.9em; color: #b8bcc2; margin: 8px 0 0 0; text-align: center;">Hold down the button while speaking</p>
-            </div>
+    <div class="container">
+        <h1>Voice Chat</h1>
+        <p class="subtitle">This example uses messages to exchange raw binary audio data.</p>
+        
+        <button id="btn-talk" 
+                onpointerdown="startTalking()" 
+                onpointerup="stopTalking()"
+                onmousedown="startTalking()" 
+                onmouseup="stopTalking()"
+                ontouchstart="startTalking()" 
+                ontouchend="stopTalking()"
+                disabled>
+            🎤 Push to Talk
+        </button>
+        
+        <div class="players">
+            <h3>room.state.players:</h3>
+            <ul class="player-list" id="playerList">
+                <li>No players connected</li>
+            </ul>
         </div>
     </div>
 
     <script>
         let isConnected = false;
+        let players = [];
         
         function updateStatus() {
             if (window.getStatus) {
                 window.getStatus((status) => {
                     if (typeof status === 'object') {
-                        document.getElementById('roomName').value = status.roomName || '';
-                        document.getElementById('serverAddress').value = status.serverAddress || 'https://voice.latticeworks-ai.com';
-                        
                         isConnected = status.isConnected;
-                        const isConnecting = status.isConnecting;
                         
-                        updateConnectionUI(isConnecting);
-                        updateDetailedStatus(status);
+                        // Update connection status
+                        const statusDot = document.getElementById('statusDot');
+                        const statusText = document.getElementById('statusText');
                         
-                        document.getElementById('connectedUsers').textContent = status.connectedUsers || 0;
-                        document.getElementById('audioLevel').textContent = Math.round((status.audioLevel || 0) * 100) + '%';
+                        if (isConnected) {
+                            statusDot.className = 'status-dot connected';
+                            statusText.textContent = 'Connected';
+                        } else {
+                            statusDot.className = 'status-dot';
+                            statusText.textContent = 'Disconnected';
+                        }
+                        
+                        // Update talk button state
+                        const talkBtn = document.getElementById('btn-talk');
+                        talkBtn.disabled = !isConnected;
+                        
+                        // Update players list
+                        updatePlayersList(status.connectedUsers || 0);
                     }
                 });
             }
         }
         
-        function updateDetailedStatus(status) {
-            // Update detailed status text
-            document.getElementById('connectionStatusDetail').textContent = status.connectionStatus || 'Unknown';
+        function updatePlayersList(userCount) {
+            const playerList = document.getElementById('playerList');
             
-            // Handle log messages
-            const lastLog = status.lastLog;
-            const lastLogContainer = document.getElementById('lastLogContainer');
-            const lastLogElement = document.getElementById('lastLogMessage');
-            
-            if (lastLog && lastLog.trim() !== '') {
-                lastLogContainer.style.display = 'block';
-                lastLogElement.textContent = lastLog;
+            if (userCount === 0) {
+                playerList.innerHTML = '<li>No players connected</li>';
             } else {
-                lastLogContainer.style.display = 'none';
+                let html = '';
+                for (let i = 0; i < userCount; i++) {
+                    const isCurrentUser = i === 0; // Assume first player is current user
+                    html += `<li class="${isCurrentUser ? 'current-user' : ''}">Player ${String.fromCharCode(65 + i)}${isCurrentUser ? ' (You)' : ''}</li>`;
+                }
+                playerList.innerHTML = html;
             }
-            
-            // Handle error messages
-            const lastError = status.lastError;
-            const errorContainer = document.getElementById('errorContainer');
-            const errorElement = document.getElementById('errorMessage');
-            
-            if (lastError && lastError.trim() !== '') {
-                errorContainer.style.display = 'block';
-                errorElement.textContent = lastError;
-            } else {
-                errorContainer.style.display = 'none';
-            }
-        }
-        
-        function updateConnectionUI(isConnecting) {
-            const statusEl = document.getElementById('connectionStatus');
-            const statusTextEl = document.getElementById('statusText');
-            const statusIndicator = statusEl.querySelector('.status-indicator');
-            const joinBtn = document.getElementById('joinBtn');
-            const leaveBtn = document.getElementById('leaveBtn');
-            const talkBtn = document.getElementById('talkButton');
-            
-            // Remove all status classes
-            statusIndicator.className = 'status-indicator';
-            
-            if (isConnected) {
-                statusIndicator.classList.add('connected');
-                statusTextEl.textContent = 'Connected to ' + (document.getElementById('roomName').value || 'room');
-                joinBtn.disabled = true;
-                leaveBtn.disabled = false;
-                talkBtn.disabled = false;  // Enable talk button when connected
-            } else if (isConnecting) {
-                statusIndicator.classList.add('connecting');
-                statusTextEl.textContent = 'Connecting...';
-                joinBtn.disabled = true;
-                leaveBtn.disabled = true;
-                talkBtn.disabled = true;  // Disable talk button while connecting
-            } else {
-                statusIndicator.classList.add('disconnected');
-                statusTextEl.textContent = 'Disconnected';
-                joinBtn.disabled = false;
-                leaveBtn.disabled = true;
-                talkBtn.disabled = true;  // Disable talk button when disconnected
-            }
-        }
-        
-        function joinRoom() {
-            const roomName = document.getElementById('roomName').value.trim();
-            const serverAddress = document.getElementById('serverAddress').value.trim();
-            
-            if (!roomName) {
-                // Show error in detailed status instead of alert
-                document.getElementById('connectionStatusDetail').textContent = 'Please enter a room name';
-                document.getElementById('errorContainer').style.display = 'block';
-                document.getElementById('errorMessage').textContent = 'Room name is required';
-                return;
-            }
-            
-            if (!serverAddress) {
-                document.getElementById('connectionStatusDetail').textContent = 'Please enter a server address';
-                document.getElementById('errorContainer').style.display = 'block';
-                document.getElementById('errorMessage').textContent = 'Server address is required';
-                return;
-            }
-            
-            // Clear previous errors
-            document.getElementById('errorContainer').style.display = 'none';
-            
-            // Show connecting state immediately
-            updateConnectionUI(true);
-            document.getElementById('connectionStatusDetail').textContent = 'Initiating connection...';
-            
-            if (window.joinRoom) {
-                window.joinRoom(roomName, serverAddress, (result) => {
-                    console.log('Join result:', result);
-                    // Update status immediately and then again after delay
-                    updateStatus();
-                    setTimeout(updateStatus, 500);
-                });
-            } else {
-                document.getElementById('errorContainer').style.display = 'block';
-                document.getElementById('errorMessage').textContent = 'Native join function not available';
-                updateConnectionUI(false);
-            }
-        }
-        
-        function leaveRoom() {
-            if (window.leaveRoom) {
-                window.leaveRoom((result) => {
-                    console.log('Leave result:', result);
-                    setTimeout(updateStatus, 500);
-                });
-            }
-        }
-        
-        
-        // Listen for status updates from plugin
-        if (window.addEventListener) {
-            window.addEventListener('statusUpdate', updateStatus);
         }
         
         // Push-to-talk functionality
@@ -447,13 +571,13 @@ std::optional<WebBrowserComponent::Resource> FLStreamEditor::getResource(const S
             console.log('Started talking (push-to-talk)');
             
             // Update button appearance
-            const talkBtn = document.getElementById('talkButton');
-            talkBtn.textContent = 'Talking...';
-            talkBtn.style.background = '#e74c3c';  // Red when talking
+            const talkBtn = document.getElementById('btn-talk');
+            talkBtn.classList.add('pushing');
+            talkBtn.textContent = '🔴 Talking...';
             
             // Set the talking parameter to true
             if (window.talkButton) {
-                window.talkButton.setValue(1.0);  // Enable talking
+                window.talkButton.setValue(1.0);
             }
         }
         
@@ -461,32 +585,47 @@ std::optional<WebBrowserComponent::Resource> FLStreamEditor::getResource(const S
             console.log('Stopped talking (push-to-talk released)');
             
             // Update button appearance
-            const talkBtn = document.getElementById('talkButton');
-            talkBtn.textContent = 'Hold to Talk';
-            talkBtn.style.background = '#27ae60';  // Green when not talking
+            const talkBtn = document.getElementById('btn-talk');
+            talkBtn.classList.remove('pushing', 'talking');
+            talkBtn.textContent = '🎤 Push to Talk';
             
             // Set the talking parameter to false
             if (window.talkButton) {
-                window.talkButton.setValue(0.0);  // Disable talking
+                window.talkButton.setValue(0.0);
             }
         }
         
-        // Prevent context menu on talk button to avoid interference with push-to-talk
+        // Auto-join room on load (simplifies UI)
+        function autoJoinRoom() {
+            if (window.joinRoom) {
+                window.joinRoom('my_room', 'https://voice.latticeworks-ai.com', (result) => {
+                    console.log('Auto-join result:', result);
+                    updateStatus();
+                });
+            }
+        }
+        
+        // Prevent context menu on talk button
         document.addEventListener('DOMContentLoaded', function() {
-            const talkBtn = document.getElementById('talkButton');
+            const talkBtn = document.getElementById('btn-talk');
             if (talkBtn) {
                 talkBtn.addEventListener('contextmenu', function(e) {
                     e.preventDefault();
                 });
             }
+            
+            // Auto-join after DOM loads
+            setTimeout(autoJoinRoom, 500);
         });
         
-        // Initial status check
+        // Listen for status updates from plugin
+        if (window.addEventListener) {
+            window.addEventListener('statusUpdate', updateStatus);
+        }
+        
+        // Initial status check and periodic updates
         updateStatus();
         setInterval(updateStatus, 1000);
-        
-        // Parameter sync - room enabled when connected
-        // No UI controls needed for this
     </script>
 </body>
 </html>
@@ -496,21 +635,18 @@ std::optional<WebBrowserComponent::Resource> FLStreamEditor::getResource(const S
         return WebBrowserComponent::Resource{streamToVector(stream), String{"text/html"}};
     }
 
-    // Status data API endpoint
-    if (urlToRetrive == "status.json")
-    {
-        Array<var> frames;
-        for (const auto& frame : statusFrames)
-            frames.add(frame);
-
-        DynamicObject::Ptr d(new DynamicObject());
-        d->setProperty("timeResolutionMs", getTimerInterval());
-        d->setProperty("frames", std::move(frames));
-
-        const auto s = JSON::toString(d.get());
-        MemoryInputStream stream{s.getCharPointer(), s.getNumBytesAsUTF8(), false};
-        return WebBrowserComponent::Resource{streamToVector(stream), String{"application/json"}};
-    }
 
     return std::nullopt;
+}
+
+//==============================================================================
+void FLStreamEditor::loadFLStreamHome()
+{
+    if (webComponent)
+    {
+        // Use correct FL Stream domain
+        addressTextBox.setText("https://voice.latticeworks-ai.com", false);
+        webComponent->goToURL("https://voice.latticeworks-ai.com");
+        std::cout << "FL Stream: Loading FL Stream Voice Chat interface" << std::endl;
+    }
 }
