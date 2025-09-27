@@ -62,18 +62,32 @@ FLStreamEditor::FLStreamEditor(FLStreamProcessor& p)
         addAndMakeVisible(talkButton.get());
         
         // Enhanced status label with better typography
-        statusLabel = std::make_unique<Label>("Status", "🎵 FLStream Voice Chat\nThis example uses messages to exchange raw binary audio data.\n\nroom.state.players:\nPlayer uHXGG-v9A\nPlayer TTifMYBQv (You)");
+        statusLabel = std::make_unique<Label>("Status", "🎵 FLStream Voice Chat\nThis example uses messages to exchange raw binary audio data.");
         statusLabel->setJustificationType(Justification::centred);
         statusLabel->setColour(Label::textColourId, Colours::white);
         statusLabel->setColour(Label::backgroundColourId, Colour(0xff2c2c2c));
-        statusLabel->setFont(Font(14.0f)); // Slightly larger font
+        statusLabel->setFont(Font(FontOptions(14.0f))); // Slightly larger font
         addAndMakeVisible(statusLabel.get());
+        
+        // Players section header
+        playersLabel = std::make_unique<Label>("PlayersHeader", "room.state.players:");
+        playersLabel->setJustificationType(Justification::centredLeft);
+        playersLabel->setColour(Label::textColourId, Colour(0xffff69b4)); // Pink like web interface
+        playersLabel->setFont(Font(FontOptions(13.0f)));
+        addAndMakeVisible(playersLabel.get());
+        
+        // Player list container
+        playerListContainer = std::make_unique<Component>();
+        addAndMakeVisible(playerListContainer.get());
+        
+        // Initialize player list
+        updatePlayerList();
         
         // Connection status indicator
         connectionStatusLabel = std::make_unique<Label>("ConnectionStatus", "● Connecting...");
         connectionStatusLabel->setJustificationType(Justification::centred);
         connectionStatusLabel->setColour(Label::textColourId, Colour(0xfff39c12)); // Orange for connecting
-        connectionStatusLabel->setFont(Font(12.0f, Font::bold));
+        connectionStatusLabel->setFont(Font(FontOptions(12.0f).withStyle("Bold")));
         addAndMakeVisible(connectionStatusLabel.get());
         
         std::cout << "FL Stream: Enhanced native UI initialized with web-like styling" << std::endl;
@@ -358,7 +372,7 @@ void FLStreamEditor::resized()
         webComponent->setBounds(area);
     }
     else if (currentUIMode == UIMode::Native) {
-        // Enhanced native UI layout with connection status
+        // Enhanced native UI layout with connection status and player list
         area.reduce(20, 20);
         
         // Connection status at top
@@ -369,14 +383,34 @@ void FLStreamEditor::resized()
         
         // Main status label
         if (statusLabel) {
-            statusLabel->setBounds(area.removeFromTop(120));
-            area.removeFromTop(20);
+            statusLabel->setBounds(area.removeFromTop(80));
+            area.removeFromTop(15);
         }
         
         // Talk button centered
         if (talkButton) {
             auto buttonArea = area.removeFromTop(60);
             talkButton->setBounds(buttonArea.reduced(buttonArea.getWidth() / 4, 0));
+            area.removeFromTop(15);
+        }
+        
+        // Players section header
+        if (playersLabel) {
+            playersLabel->setBounds(area.removeFromTop(25));
+            area.removeFromTop(5);
+        }
+        
+        // Player list container
+        if (playerListContainer) {
+            playerListContainer->setBounds(area.removeFromTop(120));
+            
+            // Layout player labels within container
+            auto playerArea = playerListContainer->getLocalBounds();
+            for (auto& playerLabel : playerLabels) {
+                if (playerLabel) {
+                    playerLabel->setBounds(playerArea.removeFromTop(30));
+                }
+            }
         }
     }
 }
@@ -698,6 +732,9 @@ void FLStreamEditor::startTalking()
 {
     std::cout << "FL Stream: Started talking (push-to-talk)" << std::endl;
     
+    isSelfTalking = true;
+    updatePlayerList(); // Update visual state immediately
+    
     // Update processor talking parameter
     auto* talkingParam = processorRef.parameters.getParameter("isTalking");
     if (talkingParam) {
@@ -708,6 +745,9 @@ void FLStreamEditor::startTalking()
 void FLStreamEditor::stopTalking()
 {
     std::cout << "FL Stream: Stopped talking (push-to-talk released)" << std::endl;
+    
+    isSelfTalking = false;
+    updatePlayerList(); // Update visual state immediately
     
     // Update processor talking parameter
     auto* talkingParam = processorRef.parameters.getParameter("isTalking");
@@ -733,6 +773,48 @@ void FLStreamEditor::updateConnectionStatus()
         connectionStatusLabel->setText("● Disconnected", dontSendNotification);
         connectionStatusLabel->setColour(Label::textColourId, Colour(0xffe74c3c)); // Red
     }
+}
+
+void FLStreamEditor::updatePlayerList()
+{
+    if (!playerListContainer) return;
+    
+    // Clear existing player labels
+    for (auto& label : playerLabels) {
+        if (label) {
+            playerListContainer->removeChildComponent(label.get());
+        }
+    }
+    playerLabels.clear();
+    
+    // Create player labels (simulating the data from the image)
+    std::vector<std::pair<String, bool>> players = {
+        {"Player AxIzvU3u5", false},  // Other player (not talking)
+        {"Player o7AfStBze (You)", isSelfTalking}  // Self with talking state
+    };
+    
+    for (const auto& player : players) {
+        auto playerLabel = std::make_unique<Label>("Player", player.first);
+        playerLabel->setJustificationType(Justification::centredLeft);
+        playerLabel->setFont(Font(FontOptions(12.0f)));
+        
+        // Apply highlighting like web interface
+        if (player.second) {
+            // Yellow background when talking (like web interface)
+            playerLabel->setColour(Label::backgroundColourId, Colour(0xffffff00));
+            playerLabel->setColour(Label::textColourId, Colour(0xff000000)); // Black text on yellow
+        } else {
+            // Default background
+            playerLabel->setColour(Label::backgroundColourId, Colour(0xff3a3a3a));
+            playerLabel->setColour(Label::textColourId, Colours::white);
+        }
+        
+        playerListContainer->addAndMakeVisible(playerLabel.get());
+        playerLabels.push_back(std::move(playerLabel));
+    }
+    
+    // Trigger relayout
+    resized();
 }
 
 void FLStreamEditor::timerCallback()

@@ -115,8 +115,15 @@ private:
     std::unique_ptr<TextButton> talkButton;
     std::unique_ptr<Label> statusLabel;
     std::unique_ptr<Label> connectionStatusLabel;
+    std::unique_ptr<Label> playersLabel;
+    std::unique_ptr<Component> playerListContainer;
     std::unique_ptr<Slider> volumeSlider;
     std::unique_ptr<ToggleButton> muteButton;
+    
+    // Player list management
+    std::vector<std::unique_ptr<Label>> playerLabels;
+    void updatePlayerList();
+    bool isSelfTalking = false;
     
     // Interactive methods for native UI
     void startTalking();
